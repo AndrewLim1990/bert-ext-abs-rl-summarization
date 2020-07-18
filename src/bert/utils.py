@@ -34,4 +34,4 @@ def obtain_sentence_embeddings_siamese(model, input_sentences):
 
 bert_model_siamese = SentenceTransformer('bert-base-nli-mean-tokens')
 bert_model = BertModel.from_pretrained('bert-base-uncased')
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
