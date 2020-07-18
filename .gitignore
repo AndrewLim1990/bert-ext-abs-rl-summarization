@@ -1,0 +1,4 @@
+.idea/*
+.python-version
+summarization-project/*
+*/__pycache__/
