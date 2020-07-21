@@ -33,7 +33,7 @@ class ExtractorModel(nn.Module):
         z, __ = self.ptr_lstm(h)
         h, z = h.squeeze(), z.squeeze()
 
-        # Eq (3)
+        # Eq (3) Todo: Replace "dot" attention mechanism w/ "additive" like in paper
         attn = torch.mm(h, z.T)  # Dot attention mechanism
 
         # Eq (4)
