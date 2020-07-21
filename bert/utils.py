@@ -7,6 +7,12 @@ import torch
 
 
 def obtain_sentence_embedding(model, tokenizer, input_sentence):
+    """
+    :param model:
+    :param tokenizer:
+    :param input_sentence:
+    :return:
+    """
     input_sentence = torch.tensor(
         tokenizer.encode(f"[CLS] {input_sentence}")
     ).unsqueeze(0)
@@ -18,6 +24,12 @@ def obtain_sentence_embedding(model, tokenizer, input_sentence):
 
 
 def obtain_sentence_embeddings(model, tokenizer, input_sentences):
+    """
+    :param model:
+    :param tokenizer:
+    :param input_sentences:
+    :return:
+    """
     cls_embeddings = torch.cat([
         obtain_sentence_embedding(model, tokenizer, s) for s in input_sentences
     ])
@@ -26,6 +38,11 @@ def obtain_sentence_embeddings(model, tokenizer, input_sentences):
 
 
 def obtain_sentence_embeddings_siamese(model, input_sentences):
+    """
+    :param model:
+    :param input_sentences:
+    :return:
+    """
     encoded_sentences = np.stack(model.encode(input_sentences))
     encoded_sentences = torch.tensor(encoded_sentences)
 

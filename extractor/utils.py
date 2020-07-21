@@ -23,7 +23,7 @@ class ExtractorModel(nn.Module):
     def forward(self, input_embeddings):
         """
         Todo: Convert from "dot" attention mechanism to "additive" to match paper
-        Todo Ref: http://web.stanford.edu/class/cs224n/slides/cs224n-2020-lecture08-nmt.pdf
+        Todo: Reference for the above Todo: http://web.stanford.edu/class/cs224n/slides/cs224n-2020-lecture08-nmt.pdf
         Todo: Provide better comments than labeling Eq numbers from paper
 
         :param input_embeddings:
