@@ -1,10 +1,12 @@
 from pytorch_transformers import BertModel
 from pytorch_transformers import BertTokenizer
 from sentence_transformers import SentenceTransformer
+from torch.nn.utils.rnn import pad_sequence
 
 import numpy as np
 import torch
 
+PADDING_VALUE = -1
 
 def obtain_sentence_embedding(model, tokenizer, input_sentence):
     """
@@ -23,16 +25,17 @@ def obtain_sentence_embedding(model, tokenizer, input_sentence):
     return cls_embedding
 
 
-def obtain_sentence_embeddings(model, tokenizer, input_sentences):
+def obtain_sentence_embeddings(model, tokenizer, documents):
     """
+    # Todo: Make more efficient than two for loops
     :param model:
     :param tokenizer:
-    :param input_sentences:
-    :return:
+    :param documents:
+    :return: list of tensors of sentence embeddings per document
     """
-    cls_embeddings = torch.cat([
-        obtain_sentence_embedding(model, tokenizer, s) for s in input_sentences
-    ])
+    cls_embeddings = pad_sequence([torch.cat([
+        obtain_sentence_embedding(model, tokenizer, sentence) for sentence in doc
+    ]) for doc in documents], padding_value=PADDING_VALUE, batch_first=True)
 
     return cls_embeddings
 

@@ -26,29 +26,28 @@ class ExtractorModel(nn.Module):
         Todo: Reference for the above Todo: http://web.stanford.edu/class/cs224n/slides/cs224n-2020-lecture08-nmt.pdf
         Todo: Provide better comments than labeling Eq numbers from paper
 
-        :param input_embeddings:
+        :param input_embeddings: shape (n_documents, seq_len, embedding_dim)
         :return:
         """
         h, __ = self.bi_lstm(input_embeddings)
         z, __ = self.ptr_lstm(h)
-        h, z = h.squeeze(), z.squeeze()
 
         # Eq (3) Todo: Replace "dot" attention mechanism w/ "additive" like in paper
-        attn = torch.mm(h, z.T)  # Dot attention mechanism
+        attn = torch.bmm(h, z.transpose(1, 2))  # Dot attention mechanism
 
         # Eq (4)
         attn_weights = self.softmax(attn)
 
         # Eq (5)
-        e = torch.mm(attn_weights, h)
+        e = torch.bmm(attn_weights, h)
 
         # Eq (1)
         u = self.linear_h(h) + self.linear_e(e)
         u = self.tanh(u)
-        u = self.linear_v(u).T
+        u = self.linear_v(u)
 
         # Eq (2)
-        p = self.softmax(u)
+        p = self.softmax(u).transpose(1, 2)
 
         return p
 
