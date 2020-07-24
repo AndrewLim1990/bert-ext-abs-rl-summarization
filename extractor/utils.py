@@ -1,4 +1,5 @@
 from torch import nn
+from utils import compute_rouge_l
 
 import torch
 
@@ -12,6 +13,7 @@ class ExtractorModel(nn.Module):
         self.bi_lstm = bi_lstm
         self.ptr_lstm = ptr_lstm
         self.softmax = nn.Softmax(dim=1)
+        self.sigmoid = nn.Sigmoid()
 
         # Todo: Find suitable attn_dim
         attn_dim = self.ptr_lstm.hidden_size
@@ -47,9 +49,44 @@ class ExtractorModel(nn.Module):
         u = self.linear_v(u)
 
         # Eq (2)
-        p = self.softmax(u).transpose(1, 2)
+        # p = self.softmax(u).squeeze()
+        p = self.sigmoid(u).squeeze()
 
         return p
+
+
+# Adapted from: https://github.com/ChenRocks/fast_abs_rl/tree/b1b66c180a135905574fdb9e80a6da2cabf7f15c
+def get_extract_label(art_sents, abs_sents):
+    """ greedily match summary sentences to article sentences"""
+    extracted = []
+    scores = []
+    indices = list(range(len(art_sents)))
+    n_art_sents = len(art_sents)
+    label_vec = torch.zeros(n_art_sents)
+
+    for abst in abs_sents:
+        rouges = [compute_rouge_l(output=art_sent, reference=abst, mode='r') for art_sent in art_sents]
+        ext = max(indices, key=lambda i: rouges[i])
+        indices.remove(ext)
+        extracted.append(ext)
+        scores.append(rouges[ext])
+        if not indices:
+            break
+
+    label_vec[extracted] = 1
+
+    return label_vec
+
+
+def get_extract_labels(documents, summaries):
+    """
+    :param documents:
+    :param summaries:
+    :return:
+    """
+    labels = [get_extract_label(doc, summ) for doc, summ in zip(documents, summaries)]
+    labels = torch.nn.utils.rnn.pad_sequence(sequences=labels, batch_first=True, padding_value=0.0)
+    return labels
 
 
 bidirectional_lstm = nn.LSTM(

@@ -8,6 +8,7 @@ import torch
 
 PADDING_VALUE = -1
 
+
 def obtain_sentence_embedding(model, tokenizer, input_sentence):
     """
     :param model:
@@ -31,13 +32,25 @@ def obtain_sentence_embeddings(model, tokenizer, documents):
     :param model:
     :param tokenizer:
     :param documents:
-    :return: list of tensors of sentence embeddings per document
+    :return: tuple (cls_embeddings, mask)
+        where cls_embeddings: torch.tensor of shape (n_docs, n_sentences_max, bert_embedding_dim)
+        where mask: torch.tensor of shape (n_docs, n_sentences_max) This masks out sentences in documents that don't
+                    have the maximum number of sentences within the batch.
     """
-    cls_embeddings = pad_sequence([torch.cat([
+    n_docs = len(documents)
+    cls_embeddings = [torch.cat([
         obtain_sentence_embedding(model, tokenizer, sentence) for sentence in doc
-    ]) for doc in documents], padding_value=PADDING_VALUE, batch_first=True)
+    ]) for doc in documents]  # list w/ length=n_docs and items w/ shape=(n_sentences, dim_bert))
 
-    return cls_embeddings
+    max_sentence_length = max([x.shape[0] for x in cls_embeddings])
+    mask = torch.ones((n_docs, max_sentence_length))
+
+    for idx, cls_embedding in enumerate(cls_embeddings):
+        mask[idx, len(cls_embedding):] = 0
+
+    cls_embeddings = pad_sequence(cls_embeddings, padding_value=PADDING_VALUE, batch_first=True)
+
+    return cls_embeddings, mask
 
 
 def obtain_sentence_embeddings_siamese(model, input_sentences):
