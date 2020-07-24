@@ -78,17 +78,6 @@ def get_extract_label(art_sents, abs_sents):
     return label_vec
 
 
-def get_extract_labels(documents, summaries):
-    """
-    :param documents:
-    :param summaries:
-    :return:
-    """
-    labels = [get_extract_label(doc, summ) for doc, summ in zip(documents, summaries)]
-    labels = torch.nn.utils.rnn.pad_sequence(sequences=labels, batch_first=True, padding_value=0.0)
-    return labels
-
-
 bidirectional_lstm = nn.LSTM(
     input_size=BERT_OUTPUT_SIZE,
     hidden_size=BI_LSTM_OUTPUT_SIZE,
