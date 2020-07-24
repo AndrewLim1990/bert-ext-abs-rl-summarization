@@ -7,7 +7,7 @@ import torch
 bce_loss = torch.nn.BCELoss(reduction='none')
 
 
-def train_extractor(model, data, learning_rate=1e-3, n_iters=1000):
+def train_extractor(model, data, learning_rate=1e-3, n_iters=1000, model_output_file="results/models/extractor.pt"):
     """
     :param model:
     :param data: list of dictionaries of form:
@@ -18,6 +18,7 @@ def train_extractor(model, data, learning_rate=1e-3, n_iters=1000):
         ]
     :param learning_rate:
     :param n_iters:
+    :param model_output_file:
     :return:
     """
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -40,6 +41,8 @@ def train_extractor(model, data, learning_rate=1e-3, n_iters=1000):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        if i % 5 == 0:
+            torch.save(model.state_dict(), model_output_file)
 
     return
 

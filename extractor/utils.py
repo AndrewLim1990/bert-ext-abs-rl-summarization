@@ -8,10 +8,21 @@ BI_LSTM_OUTPUT_SIZE = 2
 
 
 class ExtractorModel(nn.Module):
-    def __init__(self, bi_lstm, ptr_lstm):
+    def __init__(self):
         super(ExtractorModel, self).__init__()
-        self.bi_lstm = bi_lstm
-        self.ptr_lstm = ptr_lstm
+        self.bi_lstm = nn.LSTM(
+            input_size=BERT_OUTPUT_SIZE,
+            hidden_size=BI_LSTM_OUTPUT_SIZE,
+            num_layers=1,
+            bidirectional=True
+        )
+
+        self.ptr_lstm = nn.LSTM(
+            input_size=BI_LSTM_OUTPUT_SIZE * 2,
+            hidden_size=BI_LSTM_OUTPUT_SIZE * 2,
+            num_layers=1,
+            bidirectional=False
+        )
         self.softmax = nn.Softmax(dim=1)
         self.sigmoid = nn.Sigmoid()
 
@@ -76,18 +87,3 @@ def get_extract_label(art_sents, abs_sents):
     label_vec[extracted] = 1
 
     return label_vec
-
-
-bidirectional_lstm = nn.LSTM(
-    input_size=BERT_OUTPUT_SIZE,
-    hidden_size=BI_LSTM_OUTPUT_SIZE,
-    num_layers=1,
-    bidirectional=True
-)
-
-pointer_lstm = nn.LSTM(
-    input_size=BI_LSTM_OUTPUT_SIZE * 2,
-    hidden_size=BI_LSTM_OUTPUT_SIZE * 2,
-    num_layers=1,
-    bidirectional=False
-)
