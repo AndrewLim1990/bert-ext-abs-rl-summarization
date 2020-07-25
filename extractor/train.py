@@ -1,13 +1,14 @@
-from bert.utils import bert_model
-from bert.utils import bert_tokenizer
 from bert.utils import obtain_sentence_embeddings
 
 import torch
+import pickle
 
 bce_loss = torch.nn.BCELoss(reduction='none')
 
 
-def train_extractor(model, data, learning_rate=1e-3, n_iters=1000, model_output_file="results/models/extractor.pt"):
+def train_extractor(
+        model, data, learning_rate=1e-1, n_iters=1000, model_output_file="results/models/extractor.pt", save_freq=2
+):
     """
     :param model:
     :param data: list of dictionaries of form:
@@ -19,14 +20,16 @@ def train_extractor(model, data, learning_rate=1e-3, n_iters=1000, model_output_
     :param learning_rate:
     :param n_iters:
     :param model_output_file:
+    :param save_freq:
     :return:
     """
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    losses = list()
 
     for i in range(n_iters):
-        documents, extraction_labels = get_training_batch(data, batch_size=5)
+        documents, extraction_labels = get_training_batch(data, batch_size=2)
 
-        sentence_embeddings, mask = obtain_sentence_embeddings(bert_model, bert_tokenizer, documents)
+        sentence_embeddings, mask = obtain_sentence_embeddings(model.bert_model, model.bert_tokenizer, documents)
 
         # Predict probability of extraction per sentence
         extraction_probabilities = model(sentence_embeddings)
@@ -35,14 +38,16 @@ def train_extractor(model, data, learning_rate=1e-3, n_iters=1000, model_output_
         loss = bce_loss(input=extraction_probabilities, target=extraction_labels)
         loss = loss * mask
         loss = loss.sum()
+        losses.append(loss)
         print(f"Loss: {loss}")
 
         # Calculate gradient and update
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        if i % 5 == 0:
+        if i % save_freq == 0:
             torch.save(model.state_dict(), model_output_file)
+            pickle.dump(losses, open("results/models/extractor_losses.pkl", "wb"))
 
     return
 

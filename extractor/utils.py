@@ -1,10 +1,12 @@
 from torch import nn
+from pytorch_transformers import BertModel
+from pytorch_transformers import BertTokenizer
 from utils import compute_rouge_l
 
 import torch
 
 BERT_OUTPUT_SIZE = 768
-BI_LSTM_OUTPUT_SIZE = 2
+BI_LSTM_OUTPUT_SIZE = 8
 
 
 class ExtractorModel(nn.Module):
@@ -23,6 +25,12 @@ class ExtractorModel(nn.Module):
             num_layers=1,
             bidirectional=False
         )
+
+        self.bert_model = BertModel.from_pretrained('bert-base-uncased')
+        self.bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
+        self.freeze_weights(self.bert_model)
+
         self.softmax = nn.Softmax(dim=1)
         self.sigmoid = nn.Sigmoid()
 
@@ -32,6 +40,11 @@ class ExtractorModel(nn.Module):
         self.linear_e = torch.nn.Linear(self.ptr_lstm.hidden_size, attn_dim, bias=False)
         self.linear_v = torch.nn.Linear(attn_dim, 1, bias=False)
         self.tanh = torch.nn.Tanh()
+
+    @staticmethod
+    def freeze_weights(model):
+        for param in model.parameters():
+            param.requires_grad = False
 
     def forward(self, input_embeddings):
         """

@@ -1,6 +1,3 @@
-from pytorch_transformers import BertModel
-from pytorch_transformers import BertTokenizer
-from sentence_transformers import SentenceTransformer
 from torch.nn.utils.rnn import pad_sequence
 
 import numpy as np
@@ -63,8 +60,3 @@ def obtain_sentence_embeddings_siamese(model, input_sentences):
     encoded_sentences = torch.tensor(encoded_sentences)
 
     return encoded_sentences
-
-
-bert_model_siamese = SentenceTransformer('bert-base-nli-mean-tokens')
-bert_model = BertModel.from_pretrained('bert-base-uncased')
-bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
