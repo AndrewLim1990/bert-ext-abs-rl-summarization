@@ -3,3 +3,4 @@
 summarization-project/*
 __pycache__/
 data/val/*
+*.pt
