@@ -1,13 +1,14 @@
 from bert.utils import obtain_sentence_embeddings
 
-import torch
 import pickle
+import numpy as np
+import torch
 
 bce_loss = torch.nn.BCELoss(reduction='none')
 
 
 def train_extractor(
-        model, data, learning_rate=1e-1, n_iters=1000, model_output_file="results/models/extractor.pt", save_freq=2
+        model, data, learning_rate=1e-3, n_iters=10000, model_output_file="results/models/extractor.pt", save_freq=2
 ):
     """
     :param model:
@@ -27,7 +28,7 @@ def train_extractor(
     losses = list()
 
     for i in range(n_iters):
-        documents, extraction_labels = get_training_batch(data, batch_size=2)
+        documents, extraction_labels = get_training_batch(data, batch_size=5)
 
         sentence_embeddings, mask = obtain_sentence_embeddings(model.bert_model, model.bert_tokenizer, documents)
 
@@ -59,8 +60,7 @@ def get_training_batch(training_dictionaries, batch_size):
     :param batch_size:
     :return:
     """
-
-    mini_batch = training_dictionaries[:batch_size]
+    mini_batch = np.random.choice(training_dictionaries, batch_size).tolist()
 
     documents, extraction_labels = map(list, zip(*[(s['document'], s['extraction_label']) for s in mini_batch]))
     extraction_labels = torch.nn.utils.rnn.pad_sequence(
