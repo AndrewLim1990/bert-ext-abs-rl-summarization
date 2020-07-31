@@ -25,7 +25,7 @@ def train_abstractor(
         source_document_embeddings,
         target_summary_embeddings,
         initial_hidden_states
-    )  # Teacher forcing
+    )  # (batch_size, n_target_words, vocab_size)
 
     # Obtain negative log likelihood loss
 
