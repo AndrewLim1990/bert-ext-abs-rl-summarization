@@ -21,11 +21,12 @@ class AbstractorModel(nn.Module):
 
         # Todo: Find suitable attention dimension
         self.attn_dim = 8
-        self.linear_h = torch.nn.Linear(BERT_OUTPUT_SIZE, self.attn_dim, bias=False)
-        self.linear_e = torch.nn.Linear(BERT_OUTPUT_SIZE, self.attn_dim, bias=False)
+        self.W_encoder = torch.nn.Linear(BERT_OUTPUT_SIZE, self.attn_dim, bias=False)
+        self.W_decoder = torch.nn.Linear(BERT_OUTPUT_SIZE * 2, self.attn_dim, bias=False)
+        self.v = torch.nn.Linear(self.attn_dim, 1, bias=False)
 
         self.vocab_size = self.bert_tokenizer.vocab_size
-        self.linear_out = torch.nn.Linear(self.attn_dim, self.vocab_size)
+        self.linear_out = torch.nn.Linear(BERT_OUTPUT_SIZE * 2, self.vocab_size)
 
         self.max_sequence_length = 128
 
@@ -60,6 +61,9 @@ class AbstractorModel(nn.Module):
 
         # Initialize hidden state (from encoder)
         decoder_hidden_states = initial_hidden_states.view(batch_size, 1, -1)  # (batch_size, 1, bert_dim)
+        decoder_hidden_states = torch.cat(
+            [decoder_hidden_states, decoder_inputs], dim=2
+        )  # (batch_size, 1, bert_dim * 2)
 
         summary_word_probs = list()
 
@@ -67,25 +71,25 @@ class AbstractorModel(nn.Module):
             # Todo: Use a "[EOSummary]" special token instead of max_sequence_length
             for i in range(self.max_sequence_length):
                 # Obtain weighted sum of encoder_hidden_states
-                attn = torch.bmm(
-                    decoder_hidden_states,
-                    encoder_hidden_states.transpose(1, 2)
-                )  # (batch_size, 1, max_n_words)
-                attn_weights = self.softmax(attn)  # (batch_size, 1, max_n_words)
+                attn_score = self.W_encoder(encoder_hidden_states) \
+                     + self.W_decoder(decoder_hidden_states)  # (batch_size, max_n_words, attn_dim)
+                attn_score = F.tanh(attn_score)
+                attn_score = self.v(attn_score).transpose(1, 2)  # (batch_size, 1, max_n_words)
+                attn_weights = F.softmax(attn_score, dim=2)  # (batch_size, 1, max_n_words)
                 attn_outputs = torch.bmm(attn_weights, encoder_hidden_states)  # (batch_size, 1, bert_dim)
 
                 # Obtain decoder hidden state
-                decoder_hidden_states = self.linear_h(decoder_inputs) \
-                    + self.linear_e(attn_outputs)  # (batch_size, 1, attn_dim)
-                decoder_hidden_states = F.tanh(decoder_hidden_states)  # (batch_size, 1, attn_dim)
+                decoder_hidden_states = torch.cat(
+                    [attn_outputs, decoder_inputs], dim=2
+                )  # (batch_size, 1, bert_dim * 2)
 
                 # Obtain probability of selecting a word for entire vocab
                 # Todo: double check if standard practice to do a log_softmax over ENTIRE VOCAB
-                word_probs = F.log_softmax(self.linear_out(decoder_hidden_states))  # (batch_size, 1, vocab_size)
+                word_probs = F.log_softmax(self.linear_out(decoder_hidden_states), dim=2)  # (batch_size, 1, vocab_size)
 
                 # Obtain embeddings of words w/ with higest prob
                 word_indicies = torch.argmax(word_probs, dim=2)
-                decoder_inputs = self.bert_model(word_indicies)  # (batch_size, 1, bert_dim)
+                decoder_inputs = self.bert_model(word_indicies)[0]  # (batch_size, 1, bert_dim)
 
                 # Record word probability distributions for each time step
                 summary_word_probs.append(word_probs)
