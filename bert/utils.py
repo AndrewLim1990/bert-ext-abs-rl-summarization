@@ -3,7 +3,35 @@ from torch.nn.utils.rnn import pad_sequence
 import numpy as np
 import torch
 
+BERT_OUTPUT_SIZE = 768
 PADDING_VALUE = -1
+START_OF_SENTENCE_TOKEN = "[CLS]"
+
+
+def obtain_word_embeddings(model, tokenizer, documents):
+    """
+    :param model:
+    :param tokenizer:
+    :param documents: list of sentence strings
+    :return:
+    """
+    documents = [
+        torch.cat(
+            [torch.tensor(tokenizer.encode(input_sentence)) for input_sentence in input_sentences]
+        ) for input_sentences in documents
+    ]
+    doc_lengths = [len(doc) for doc in documents]
+    documents = torch.nn.utils.rnn.pad_sequence(documents).T
+
+    last_hidden_state, pooler_output = model(documents)
+    word_embeddings = last_hidden_state.squeeze()
+
+    mask = torch.ones(word_embeddings.shape)
+
+    for idx, doc_length in enumerate(doc_lengths):
+        mask[idx, doc_length:] = 0
+
+    return word_embeddings, mask
 
 
 def obtain_sentence_embedding(model, tokenizer, input_sentence):
@@ -14,7 +42,7 @@ def obtain_sentence_embedding(model, tokenizer, input_sentence):
     :return:
     """
     input_sentence = torch.tensor(
-        tokenizer.encode(f"[CLS] {input_sentence}")
+        tokenizer.encode(f"{START_OF_SENTENCE_TOKEN} {input_sentence}")
     ).unsqueeze(0)
     last_hidden_state, pooler_output = model(input_sentence)
     last_hidden_state = last_hidden_state.squeeze()

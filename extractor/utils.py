@@ -1,3 +1,4 @@
+from bert.utils import BERT_OUTPUT_SIZE
 from torch import nn
 from pytorch_transformers import BertModel
 from pytorch_transformers import BertTokenizer
@@ -5,7 +6,6 @@ from utils import compute_rouge_l
 
 import torch
 
-BERT_OUTPUT_SIZE = 768
 BI_LSTM_OUTPUT_SIZE = 8
 
 

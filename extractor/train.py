@@ -55,7 +55,6 @@ def train_extractor(
 
 def get_training_batch(training_dictionaries, batch_size):
     """
-    Todo: Randmize batches obtained
     :param training_dictionaries:
     :param batch_size:
     :return:
