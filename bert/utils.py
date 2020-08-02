@@ -10,20 +10,25 @@ START_OF_SENTENCE_TOKEN = "[CLS]"
 
 def obtain_word_embeddings(model, tokenizer, documents):
     """
-    :param model:
-    :param tokenizer:
+    :param model: bert model to convert word index to word embedding
+    :param tokenizer: bert tokenizer to convert word to word index
     :param documents: list of sentence strings
     :return:
     """
+    start_idx = torch.tensor([tokenizer.cls_token_id])
+    end_idx = torch.tensor([tokenizer.sep_token_id])
+
     documents = [
-        torch.cat(
+        torch.cat([start_idx, torch.cat(
             [torch.tensor(tokenizer.encode(input_sentence)) for input_sentence in input_sentences]
-        ) for input_sentences in documents
+        ), end_idx]) for input_sentences in documents
     ]
-    doc_lengths = [len(doc) for doc in documents]
+
+    doc_lengths = [len(doc) - 1 for doc in documents]  # minus 1 because we don't generate prediction for [SEP] token
     documents = torch.nn.utils.rnn.pad_sequence(documents).T
 
-    last_hidden_state, pooler_output = model(documents)
+    # last_hidden_state, pooler_output = model(documents)
+    last_hidden_state = torch.cat([model(doc.view(-1, 1))[0].transpose(0, 1) for doc in documents])
     word_embeddings = last_hidden_state.squeeze()
 
     mask = torch.ones(word_embeddings.shape)
@@ -31,7 +36,7 @@ def obtain_word_embeddings(model, tokenizer, documents):
     for idx, doc_length in enumerate(doc_lengths):
         mask[idx, doc_length:] = 0
 
-    return word_embeddings, mask
+    return word_embeddings, mask, documents
 
 
 def obtain_sentence_embedding(model, tokenizer, input_sentence):

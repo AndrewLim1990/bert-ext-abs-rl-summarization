@@ -26,85 +26,91 @@ class AbstractorModel(nn.Module):
         self.linear_out = torch.nn.Linear(BERT_OUTPUT_SIZE, self.vocab_size)
 
         self.max_sequence_length = 128
+        self.teacher_forcing_pct = 0
 
     @staticmethod
     def freeze_weights(model):
         for param in model.parameters():
             param.requires_grad = False
 
-    def forward(self, encoder_hidden_states, target_embeddings, initial_hidden_states, teacher_forcing=True):
+    def obtain_word_distribution(self, input_embeddings, encoder_hidden_states):
+        attn_score = torch.bmm(
+            input_embeddings,  # (batch_size, n_target_words, bert_dim)
+            encoder_hidden_states.transpose(1, 2)  # (batch_size, bert_dim, n_src_words)
+        )  # (batch_size, n_target_words, n_src_words)
+        # attn_score = F.tanh(attn_score)
+        attn_weights = F.softmax(attn_score, dim=2)  # (batch_size, n_target_words, n_src_words)
+
+        # Calculate decoder hidden states
+        decoder_hidden_states = torch.bmm(
+            attn_weights,  # (batch_size, n_target_words, n_src_words)
+            encoder_hidden_states  # (batch_size, n_src_words, bert_dim)
+        )  # (batch_size, n_target_words, bert_dim)
+
+        # Obtain probability of selecting a word for entire vocab
+        summary_word_probs = F.log_softmax(
+            self.linear_out(decoder_hidden_states),
+            dim=2
+        )  # (batch_size, n_target_words, vocab_size)
+
+        return summary_word_probs
+
+    def forward(self, encoder_hidden_states, target_embeddings=None, teacher_forcing_pct=0):
         """
         Todo: Convert from "dot" attention mechanism to "additive" to match paper
         Todo: Reference for the above Todo: http://web.stanford.edu/class/cs224n/slides/cs224n-2020-lecture08-nmt.pdf
-        Todo: Figure out if should keep unqueezed version.
-        Todo: Fix non-teacher-forcing output shape
-
-        Teacher forcing, must use decoder embeddings
 
         :param encoder_hidden_states: torch.tensor of shape: (batch_size, n_src_words, bert_dim)
         :param target_embeddings:
-        :param initial_hidden_states:
-        :param teacher_forcing:
+        :param teacher_forcing_pct:
         :return: torch.tensor of shape (batch_size, n_target_words, vocab_size)
         """
         batch_size = encoder_hidden_states.shape[0]
 
+        # Determine target_length if not teacher forcing
+        target_length = self.max_sequence_length
+        if target_embeddings is not None:
+            target_length = target_embeddings.shape[1]
+
         # Initialize input word embeddings
         decoder_input_idx = torch.tensor(self.bert_tokenizer.encode(
             START_OF_SENTENCE_TOKEN
-        )).repeat(batch_size).unsqueeze(0)
+        )).repeat(batch_size).unsqueeze(0).T
         decoder_inputs, __ = self.bert_model(decoder_input_idx)
         decoder_inputs = decoder_inputs.view(batch_size, 1, -1)  # (batch_size, 1, bert_dim)
 
         summary_word_probs = list()
 
+        # Determine if should teacher force or not
+        teacher_forcing = torch.rand(1) <= teacher_forcing_pct
+
         if teacher_forcing:
-            attn_score = torch.bmm(
-                target_embeddings,  # (batch_size, n_target_words, bert_dim)
-                encoder_hidden_states.transpose(1, 2)  # (batch_size, bert_dim, n_src_words)
-            )  # (batch_size, n_target_words, n_src_words)
-            attn_weights = F.softmax(attn_score, dim=2)  # (batch_size, n_target_words, n_src_words)
+            summary_word_probs = self.obtain_word_distribution(
+                input_embeddings=target_embeddings,
+                encoder_hidden_states=encoder_hidden_states
+            )
 
-            # Calculate decoder hidden states
-            decoder_hidden_states = torch.bmm(
-                attn_weights,  # (batch_size, n_target_words, n_src_words)
-                encoder_hidden_states  # (batch_size, n_src_words, bert_dim)
-            )  # (batch_size, n_target_words, bert_dim)
-
-            # Obtain probability of selecting a word for entire vocab
-            # Todo: double check if standard practice to do a log_softmax over ENTIRE VOCAB
-            summary_word_probs = F.log_softmax(
-                self.linear_out(decoder_hidden_states),
-                dim=2
-            )  # (batch_size, n_target_words, vocab_size)
         else:
-            for i in range(self.max_sequence_length):
-                attn_score = torch.bmm(
-                    decoder_inputs,
-                    encoder_hidden_states.transpose(1, 2)
-                )  # (batch_size, 1, n_src_words)
-                attn_weights = F.softmax(attn_score, dim=2)  # (batch_size, 1, n_src_words)
-
-                # Calculate decoder hidden states
-                decoder_hidden_states = torch.bmm(attn_weights, encoder_hidden_states)  # (batch_size, 1, bert_dim)
-
-                # Obtain probability of selecting a word for entire vocab
-                # Todo: double check if standard practice to do a log_softmax over ENTIRE VOCAB
-                word_probs = F.log_softmax(self.linear_out(decoder_hidden_states), dim=2)  # (batch_size, 1, vocab_size)
+            for i in range(target_length):
+                word_prob = self.obtain_word_distribution(
+                    input_embeddings=decoder_inputs,
+                    encoder_hidden_states=encoder_hidden_states
+                )
 
                 # Obtain embeddings of words w/ with higest prob
-                word_indicies = torch.argmax(word_probs, dim=2)
+                word_indicies = torch.argmax(word_prob, dim=2)
                 decoder_inputs = self.bert_model(word_indicies)[0]  # (batch_size, 1, bert_dim)
 
                 # Record word probability distributions for each time step
-                summary_word_probs.append(word_probs)
+                summary_word_probs.append(word_prob)
 
             # Reformat word probability distributions for each time step
             summary_word_probs = torch.cat(
-                summary_word_probs
-            ).transpose(0, 1)  # (batch_size, n_summary_words, 1, vocab_size)
+                summary_word_probs,
+                dim=1
+            )  # (batch_size, n_summary_words, vocab_size)
 
-        return summary_word_probs
+        return summary_word_probs, teacher_forcing
 
 
 def obtain_initial_hidden_states(source_document_embeddings, source_mask):
