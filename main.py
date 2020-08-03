@@ -1,5 +1,6 @@
 from abstractor.train import train_abstractor
 from abstractor.utils import AbstractorModel
+from abstractor.utils import AbstractorModelRNN
 from extractor.train import train_extractor
 from extractor.utils import ExtractorModel
 from data.utils import load_training_dictionaries
@@ -17,7 +18,7 @@ def main():
     #     data=training_dictionaries
     # )
 
-    abstractor_model = AbstractorModel()
+    abstractor_model = AbstractorModelRNN()
 
     train_abstractor(
         abstractor_model,

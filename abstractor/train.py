@@ -7,7 +7,7 @@ nll_loss = torch.nn.NLLLoss(reduction='none')
 
 
 def train_abstractor(
-        model, data, learning_rate=1e-3, n_iters=10000, model_output_file="results/models/abstractor.pt", save_freq=2
+        model, data, learning_rate=5e-3, n_iters=100000, model_output_file="results/models/abstractor.pt", save_freq=10
 ):
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -17,10 +17,10 @@ def train_abstractor(
 
         # Obtain embeddings
         source_document_embeddings, __, __ = obtain_word_embeddings(
-            model.bert_model, model.bert_tokenizer, source_documents
+            model.bert_model, model.bert_tokenizer, source_documents, static_embeddings=False
         )
         target_summary_embeddings, target_mask, target_tokens = obtain_word_embeddings(
-            model.bert_model, model.bert_tokenizer, target_summaries
+            model.bert_model, model.bert_tokenizer, target_summaries, static_embeddings=True
         )
 
         # Shift target tokens and format masks
@@ -33,7 +33,7 @@ def train_abstractor(
         extraction_probabilities, teacher_forcing = model(
             source_document_embeddings,
             target_summary_embeddings,
-            teacher_forcing_pct=0
+            teacher_forcing_pct=1.0
         )  # (batch_size, n_target_words, vocab_size)
 
         # Obtain negative log likelihood loss

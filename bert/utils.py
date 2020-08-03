@@ -8,11 +8,12 @@ PADDING_VALUE = -1
 START_OF_SENTENCE_TOKEN = "[CLS]"
 
 
-def obtain_word_embeddings(model, tokenizer, documents):
+def obtain_word_embeddings(model, tokenizer, documents, static_embeddings=False):
     """
     :param model: bert model to convert word index to word embedding
     :param tokenizer: bert tokenizer to convert word to word index
     :param documents: list of sentence strings
+    :param static_embeddings:
     :return:
     """
     start_idx = torch.tensor([tokenizer.cls_token_id])
@@ -27,8 +28,10 @@ def obtain_word_embeddings(model, tokenizer, documents):
     doc_lengths = [len(doc) - 1 for doc in documents]  # minus 1 because we don't generate prediction for [SEP] token
     documents = torch.nn.utils.rnn.pad_sequence(documents).T
 
-    # last_hidden_state, pooler_output = model(documents)
-    last_hidden_state = torch.cat([model(doc.view(-1, 1))[0].transpose(0, 1) for doc in documents])
+    if static_embeddings:
+        last_hidden_state = torch.cat([model(doc.view(-1, 1))[0].transpose(0, 1) for doc in documents])
+    else:
+        last_hidden_state, pooler_output = model(documents)
     word_embeddings = last_hidden_state.squeeze()
 
     mask = torch.ones(word_embeddings.shape)
