@@ -7,7 +7,7 @@ nll_loss = torch.nn.NLLLoss(reduction='none')
 
 
 def train_abstractor(
-        model, data, learning_rate=5e-3, n_iters=100000, model_output_file="results/models/abstractor.pt", save_freq=10
+        model, data, learning_rate=1e-3, n_iters=100000, model_output_file="results/models/abstractor.pt", save_freq=10
 ):
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
