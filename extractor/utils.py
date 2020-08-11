@@ -10,7 +10,7 @@ BI_LSTM_OUTPUT_SIZE = 8
 
 
 class ExtractorModel(nn.Module):
-    def __init__(self):
+    def __init__(self, bert_tokenizer, bert_model):
         super(ExtractorModel, self).__init__()
         self.bi_lstm = nn.LSTM(
             input_size=BERT_OUTPUT_SIZE,
@@ -26,8 +26,8 @@ class ExtractorModel(nn.Module):
             bidirectional=False
         )
 
-        self.bert_model = BertModel.from_pretrained('bert-base-uncased')
-        self.bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.bert_model = bert_model
+        self.bert_tokenizer = bert_tokenizer
 
         self.freeze_weights(self.bert_model)
 
@@ -53,7 +53,7 @@ class ExtractorModel(nn.Module):
         Todo: Provide better comments than labeling Eq numbers from paper
 
         :param input_embeddings: shape (n_documents, seq_len, embedding_dim)
-        :return:
+        :return: torch.tensor containing probability of extration of each sentence
         """
         h, __ = self.bi_lstm(input_embeddings)
         z, __ = self.ptr_lstm(h)
@@ -73,7 +73,6 @@ class ExtractorModel(nn.Module):
         u = self.linear_v(u)
 
         # Eq (2)
-        # p = self.softmax(u).squeeze()
         p = self.sigmoid(u).squeeze()
 
         return p

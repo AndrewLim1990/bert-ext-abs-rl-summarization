@@ -122,15 +122,15 @@ class AbstractorModel(nn.Module):
 
 
 class AbstractorModelRNN(AbstractorModel):
-    def __init__(self):
+    def __init__(self, bert_tokenizer, bert_model):
         super(AbstractorModelRNN, self).__init__()
         self.tanh = torch.nn.Tanh()
         self.relu = torch.nn.ReLU()
         self.sigmoid = nn.Sigmoid()
         self.softmax = nn.Softmax(dim=1)
 
-        self.bert_model = BertModel.from_pretrained('bert-base-uncased')
-        self.bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.bert_model = bert_model
+        self.bert_tokenizer = bert_tokenizer
         self.freeze_weights(self.bert_model)
 
         # Todo: Find suitable attention dimension
