@@ -12,6 +12,7 @@ BI_LSTM_OUTPUT_SIZE = 8
 class ExtractorModel(nn.Module):
     def __init__(self, bert_tokenizer, bert_model):
         super(ExtractorModel, self).__init__()
+        self.input_dim = BERT_OUTPUT_SIZE
         self.bi_lstm = nn.LSTM(
             input_size=BERT_OUTPUT_SIZE,
             hidden_size=BI_LSTM_OUTPUT_SIZE,

@@ -18,27 +18,27 @@ def main():
 
     extractor_model = ExtractorModel(bert_tokenizer, bert_model)
 
-    train_extractor(
-        extractor_model,
-        data=training_dictionaries
-    )
+    # train_extractor(
+    #     extractor_model,
+    #     data=training_dictionaries
+    # )
 
-    # abstractor_model = AbstractorModelRNN(bert_tokenizer, bert_model)
+    abstractor_model = AbstractorModelRNN(bert_tokenizer, bert_model)
 
     # train_abstractor(
     #     abstractor_model,
     #     data=training_dictionaries
     # )
 
-    # rl_model = RLModel(
-    #     extractor_model,
-    #     abstractor_model,
-    # )
-    #
-    # train_system(
-    #     rl_model=rl_model,
-    #     data=training_dictionaries
-    # )
+    rl_model = RLModel(
+        extractor_model,
+        abstractor_model,
+    )
+
+    train_system(
+        rl_model=rl_model,
+        data=training_dictionaries
+    )
 
 
 if __name__ == '__main__':

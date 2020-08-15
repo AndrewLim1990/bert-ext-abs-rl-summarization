@@ -135,7 +135,7 @@ class AbstractorModelRNN(AbstractorModel):
 
         # Todo: Find suitable attention dimension
         self.tune_dim = 8
-        self.bert_fine_tune = torch.nn.Linear(BERT_OUTPUT_SIZE, self.attn_dim, bias=False)
+        self.bert_fine_tune = torch.nn.Linear(BERT_OUTPUT_SIZE, self.tune_dim, bias=False)
         self.gru = torch.nn.GRU(self.tune_dim * 2, self.tune_dim)
 
         self.vocab_size = self.bert_tokenizer.vocab_size
