@@ -48,7 +48,7 @@ def train_system(rl_model, data, n_iters=5):
         rewards = rl_model.determine_rewards(abstract_sentence_indicies, target_tokens, target_mask)
 
         # Update RL model
-d         pass
+        pass
 
 
 def get_training_batch(training_dictionaries, batch_size):
