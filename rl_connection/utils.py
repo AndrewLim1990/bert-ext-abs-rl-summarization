@@ -452,8 +452,6 @@ class RLModel:
         return sentence_words
 
 
-
-
 class Logit(torch.nn.Module):
     def __init__(self):
         super(Logit, self).__init__()
