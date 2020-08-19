@@ -290,21 +290,6 @@ class RLModel:
         returns = torch.tensor(returns)
         return returns
 
-    def get_returns(self, trajectory):
-        rewards = [t[2] for t in trajectory]
-        is_terminals = [t[3] is None for t in trajectory]
-        discounted_rewards = list()
-
-        for reward, is_terminal in reversed(list(zip(rewards, is_terminals))):
-            if is_terminal:
-                discounted_reward = 0
-            discounted_reward = reward + self.gamma * discounted_reward
-            discounted_rewards.insert(0, [discounted_reward])
-
-        discounted_rewards = torch.tensor(discounted_rewards)
-
-        return discounted_rewards
-
     @staticmethod
     def select_random_batch(actions, log_probs, returns, advantages, mini_batch_size):
         random_indicies = np.random.randint(0, len(actions), mini_batch_size)
