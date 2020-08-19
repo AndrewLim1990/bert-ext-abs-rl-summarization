@@ -306,70 +306,15 @@ class RLModel:
         return discounted_rewards
 
     @staticmethod
-    def select_random_batch(current_states, actions, log_probs, returns, advantages, mini_batch_size):
-        random_indicies = np.random.randint(0, len(current_states), mini_batch_size)
+    def select_random_batch(actions, log_probs, returns, advantages, mini_batch_size):
+        random_indicies = np.random.randint(0, len(actions), mini_batch_size)
 
-        batch_current_states = current_states[random_indicies]
         batch_actions = actions[random_indicies]
         batch_log_probs = log_probs[random_indicies]
         batch_returns = returns[random_indicies]
         batch_advantages = advantages[random_indicies]
 
-        return batch_current_states, batch_actions, batch_log_probs, batch_returns, batch_advantages
-
-    def update(self, trajectory, clip_val=0.2):
-        """
-        :param trajectory:
-        :param clip_val:
-        :return:
-        """
-        # Extract from trajectory
-        current_states, actions, rewards, next_states, old_log_probs, old_values = list(zip(*trajectory))
-        current_states = torch.cat(current_states)
-        old_log_probs = torch.cat(old_log_probs)
-        old_values = torch.cat(old_values)
-        returns = self.get_gae(trajectory)
-
-        # Obtain advantages
-        advantages = returns - old_values
-
-        # Learn for each step in trajectory
-        for _ in range(len(trajectory)):
-            # Get random sample of experiences
-            batch_current_state, batch_actions, batch_old_log_probs, batch_returns, batch_advantages = \
-                self.select_random_batch(
-                    current_states=current_states,
-                    actions=actions,
-                    log_probs=old_log_probs,
-                    returns=returns,
-                    advantages=advantages,
-                    mini_batch_size=16
-                )
-            batch_old_log_probs = batch_old_log_probs.detach()
-            batch_current_state = batch_current_state.detach()
-            batch_actions = batch_actions.detach()
-
-            new_log_probs, new_values, entropy = self.policy_net.evaluate(
-                batch_current_state,
-                batch_actions
-            )
-
-            # Calculate loss for actor
-            ratio = (new_log_probs - batch_old_log_probs.detach()).exp().view(-1, 1)
-            loss1 = ratio * batch_advantages.detach()
-            loss2 = torch.clamp(ratio, 1 - clip_val, 1 + clip_val) * batch_advantages.detach()
-            actor_loss = -torch.min(loss1, loss2).mean()
-
-            # Calculate loss for critic
-            sampled_returns = batch_returns.detach()
-            critic_loss = (new_values - sampled_returns).pow(2).mean()
-
-            # Credit: https://github.com/higgsfield/RL-Adventure-2/blob/master/3.ppo.ipynb
-            overall_loss = 0.5 * critic_loss + actor_loss - 0.001 * entropy
-
-            self.optimizer.zero_grad()
-            overall_loss.backward()
-            self.optimizer.step()
+        return batch_actions, batch_log_probs, batch_returns, batch_advantages
 
     def create_abstracted_sentences(
             self,
@@ -416,14 +361,17 @@ class RLModel:
 
         return chosen_words
 
-    def determine_rewards(self, output_sentence, target_sentence, target_mask):
+    def determine_rewards(self, actions, output_sentence, target_sentence, target_mask):
         """
         Uses ROUGE to calculate reward
+        :param actions:
         :param output_sentence:
         :param target_sentence:
         :param target_mask:
         :return:
+        Todo: Reward for each action, not just a the end
         """
+        rewards = [torch.zeros(ext_sents.shape) for ext_sents in actions]
         n_target_words = target_mask[:, :, 0].sum(dim=1)
 
         # Convert target sentences indicies into words
@@ -436,7 +384,10 @@ class RLModel:
         scores = self.rouge.get_scores(output_sentence, target_sentence)
         scores = [score['rouge-l']['f'] for score in scores]
 
-        return scores
+        for doc_idx in range(len(rewards)):
+            rewards[doc_idx][len(actions[doc_idx]) - 1] = scores[doc_idx]
+
+        return rewards
 
     def convert_to_words(self, sentence_indicies, n_target_words):
         sentence_indicies = torch.roll(sentence_indicies, dims=1, shifts=-1)  # shift left
@@ -450,6 +401,58 @@ class RLModel:
         sentence_words = [" ".join(s[:n_words]) for s, n_words in zip(sentence_words, n_target_words)]
 
         return sentence_words
+
+    def update(self, state, trajectory, clip_val=0.2):
+        """
+        :param: state:
+        :param trajectory:
+        :param clip_val:
+        :return:
+        """
+        # Extract from trajectory
+        actions, rewards, old_log_probs, old_values = list(zip(*trajectory))
+        old_log_probs = torch.cat(old_log_probs)
+        old_values = torch.cat(old_values)
+        returns = self.get_gae(trajectory)
+
+        # Obtain advantages
+        advantages = returns - old_values
+
+        # Learn for each step in trajectory
+        for _ in range(len(trajectory)):
+            # Get random sample of experiences
+            batch_actions, batch_old_log_probs, batch_returns, batch_advantages = \
+                self.select_random_batch(
+                    actions=actions,
+                    log_probs=old_log_probs,
+                    returns=returns,
+                    advantages=advantages,
+                    mini_batch_size=16
+                )
+            batch_old_log_probs = batch_old_log_probs.detach()
+            batch_actions = batch_actions.detach()
+
+            new_log_probs, new_values, entropy = self.policy_net.evaluate(
+                state,
+                batch_actions
+            )
+
+            # Calculate loss for actor
+            ratio = (new_log_probs - batch_old_log_probs.detach()).exp().view(-1, 1)
+            loss1 = ratio * batch_advantages.detach()
+            loss2 = torch.clamp(ratio, 1 - clip_val, 1 + clip_val) * batch_advantages.detach()
+            actor_loss = -torch.min(loss1, loss2).mean()
+
+            # Calculate loss for critic
+            sampled_returns = batch_returns.detach()
+            critic_loss = (new_values - sampled_returns).pow(2).mean()
+
+            # Credit: https://github.com/higgsfield/RL-Adventure-2/blob/master/3.ppo.ipynb
+            overall_loss = 0.5 * critic_loss + actor_loss - 0.001 * entropy
+
+            self.optimizer.zero_grad()
+            overall_loss.backward()
+            self.optimizer.step()
 
 
 class Logit(torch.nn.Module):

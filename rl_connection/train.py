@@ -33,11 +33,11 @@ def train_system(rl_model, data, n_iters=5):
 
     for i in range(n_iters):
         # Run trajectory
-        batch_actions, log_probs, values = rl_model.sample_actions(source_sentence_embeddings, source_mask)
+        actions, log_probs, values = rl_model.sample_actions(source_sentence_embeddings, source_mask)
 
         # Obtain abstracted sentence from abstractor
         abstract_sentence_indicies = rl_model.create_abstracted_sentences(
-            batch_actions,
+            actions,
             source_documents,
             stop_action_index,
             teacher_forcing_pct=1.0,
@@ -45,10 +45,16 @@ def train_system(rl_model, data, n_iters=5):
         )
 
         # Obtain returns from ROUGE
-        rewards = rl_model.determine_rewards(abstract_sentence_indicies, target_tokens, target_mask)
+        rewards = rl_model.determine_rewards(actions, abstract_sentence_indicies, target_tokens, target_mask)
 
         # Update RL model
-        pass
+        actions = torch.cat(actions)
+        rewards = torch.cat(rewards)
+        trajectory = zip(actions, rewards, log_probs, values)
+        rl_model.update(
+            state=source_sentence_embeddings,
+            trajectory=trajectory
+        )
 
 
 def get_training_batch(training_dictionaries, batch_size):
