@@ -48,9 +48,10 @@ def train_system(rl_model, data, n_iters=5):
         rewards = rl_model.determine_rewards(actions, abstract_sentence_indicies, target_tokens, target_mask)
 
         # Update RL model
+        last_action_mask = rl_model.last_action_mask(actions)
         actions = torch.cat(actions)
         rewards = torch.cat(rewards)
-        trajectory = zip(actions, rewards, log_probs, values)
+        trajectory = (actions, rewards, log_probs, values, last_action_mask)
         rl_model.update(
             state=source_sentence_embeddings,
             trajectory=trajectory

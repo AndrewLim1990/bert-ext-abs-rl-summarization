@@ -273,11 +273,11 @@ class RLModel:
         :return:
         """
         # Todo: replace this codeblock
-        rewards = [t[2] for t in trajectory]
-        values = [t[-1] for t in trajectory]
+        rewards = trajectory[1]
+        values = trajectory[3]
         dummy_next_value = 0  # should get masked out
-        values = values + [dummy_next_value]
-        masks = [t[3] is not None for t in trajectory]  # next_state is not None
+        values = torch.cat([values, torch.tensor([dummy_next_value]).float()])
+        masks = ~trajectory[4]  # is not terminal
 
         gae = 0
         returns = []
@@ -287,7 +287,7 @@ class RLModel:
             gae = delta + self.gamma * lmbda * masks[step] * gae
             returns.insert(0, gae + values[step])
 
-        returns = torch.cat(returns)
+        returns = torch.tensor(returns)
         return returns
 
     def get_returns(self, trajectory):
@@ -402,17 +402,24 @@ class RLModel:
 
         return sentence_words
 
+    @staticmethod
+    def last_action_mask(actions):
+        action_mask = [torch.zeros(ext_sents.shape) for ext_sents in actions]
+
+        for doc_idx in range(len(action_mask)):
+            action_mask[doc_idx][len(actions[doc_idx]) - 1] = 1
+
+        return torch.cat(action_mask).bool()
+
     def update(self, state, trajectory, clip_val=0.2):
         """
-        :param: state:
+        :param state:
         :param trajectory:
         :param clip_val:
         :return:
         """
         # Extract from trajectory
-        actions, rewards, old_log_probs, old_values = list(zip(*trajectory))
-        old_log_probs = torch.cat(old_log_probs)
-        old_values = torch.cat(old_values)
+        actions, rewards, old_log_probs, old_values, last_action_mask = trajectory
         returns = self.get_gae(trajectory)
 
         # Obtain advantages
