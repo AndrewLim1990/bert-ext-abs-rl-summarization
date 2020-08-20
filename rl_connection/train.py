@@ -54,6 +54,7 @@ def train_system(rl_model, data, n_iters=5):
         trajectory = (actions, rewards, log_probs, values, last_action_mask)
         rl_model.update(
             state=source_sentence_embeddings,
+            state_mask=source_mask,
             trajectory=trajectory
         )
 

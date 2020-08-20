@@ -186,15 +186,6 @@ class ActorCritic(torch.nn.Module):
         batch_values = torch.tensor(batch_values)  # (1, n_batch_ext_sents)
         return batch_values
 
-    def evaluate(self, state, action):
-        actor_output = self.actor_layer(state)
-        dist = Categorical(actor_output)
-        entropy = dist.entropy().mean()
-        log_probs = dist.log_prob(action.view(-1))
-        value = self.critic_layer(state)
-
-        return log_probs, value, entropy
-
 
 class RLModel:
     def __init__(
@@ -396,9 +387,10 @@ class RLModel:
 
         return torch.cat(action_mask).bool()
 
-    def update(self, state, trajectory, clip_val=0.2):
+    def update(self, state, state_mask, trajectory, clip_val=0.2, n_label_sents=None):
         """
         :param state:
+        :param state_mask:
         :param trajectory:
         :param clip_val:
         :return:
@@ -426,10 +418,13 @@ class RLModel:
 
             new_log_probs, new_values, entropy = self.policy_net.evaluate(
                 state,
-                batch_actions
+                state_mask,
+                batch_actions,
+                n_label_sents
             )
 
             # Calculate loss for actor
+            # Todo: Figure out how to calculate loss (# of actions vs #action_indices
             ratio = (new_log_probs - batch_old_log_probs.detach()).exp().view(-1, 1)
             loss1 = ratio * batch_advantages.detach()
             loss2 = torch.clamp(ratio, 1 - clip_val, 1 + clip_val) * batch_advantages.detach()
