@@ -69,7 +69,7 @@ class ActorCritic(torch.nn.Module):
         """
         # Obtain distribution amongst actions
         batch_state, mask = self.add_stop_action(batch_state, mask)
-        batch_action_probs = self.extraction_model(batch_state)  # prob of extraction per sentence (binary)
+        batch_action_probs = self.extraction_model.forward(batch_state)  # prob of extraction per sentence (binary)
         batch_action_probs = batch_action_probs * mask
 
         # Obtain number of samples in batch
@@ -91,6 +91,7 @@ class ActorCritic(torch.nn.Module):
             n_actions = action_probs.shape[1]
             stop_action_idx = n_actions - 1  # Previously appended stop_action embedding
             action_indicies, ext_sents, action_dists = list(), list(), list()
+            extraction_mask = torch.ones(action_probs.shape)
 
             # Extract sentences one at a time
             n_ext_sents = 0
@@ -102,15 +103,20 @@ class ActorCritic(torch.nn.Module):
                 # Sample sentence to extract
                 action_idx = action_dist.sample()  # index of sentence to extract
                 ext_sent = batch_state[sample_idx, action_idx:action_idx+1, :]  # embedding of sentence to extract
-                action_probs[0, action_idx] = 0  # don't select sentence again
 
                 # Collect
                 action_dists.append(action_dist)
-                action_indicies.append(action_idx)
                 ext_sents.append(ext_sent)
+                action_indicies.append(action_idx)
+
+                # Don't select sentence again in future
+                extraction_mask = torch.ones(action_probs.shape)
+                for extracted_idx in action_indicies:
+                    extraction_mask[0, extracted_idx] = 0
+                action_probs = action_probs * extraction_mask
 
                 # Track number of sentences extracted from article
-                n_ext_sents += 1
+                n_ext_sents = n_ext_sents + 1
 
                 # Check to see if should stop extracting sentences
                 is_stop_action = action_idx >= stop_action_idx
@@ -181,15 +187,15 @@ class ActorCritic(torch.nn.Module):
                 input_embedding = extracted_sents[i].unsqueeze(0)
                 input_embedding = self.bert_fine_tune(input_embedding)  # (1, 1, 8)
 
-            batch_values += values
+            batch_values = batch_values + values
 
-        batch_values = torch.tensor(batch_values)  # (1, n_batch_ext_sents)
+        batch_values = torch.cat(batch_values).squeeze()  # (1, n_batch_ext_sents)
         return batch_values
 
 
 class RLModel:
     def __init__(
-            self, extractor_model, abstractor_model, alpha=2e-5, gamma=0.99, batch_size=128):
+            self, extractor_model, abstractor_model, alpha=1e-3, gamma=0.99, batch_size=128):
         # Set attributes
         self.extractor_model = extractor_model
         self.abstractor_model = abstractor_model
@@ -226,36 +232,25 @@ class RLModel:
         :param mask:
         :return:
         """
-        dists, actions, values = self.policy_net(state, mask)
+        dists, actions, values = self.policy_net.forward(state, mask)
 
+        # Todo: Combine calculation of entropy + log_prob
         log_probs = list()
+        entropys = list()
         for article_dists, article_actions in zip(dists, actions):
-            log_prob = torch.tensor(
+            log_prob = torch.cat(
                 [dist.log_prob(action) for dist, action in zip(article_dists, article_actions)]
             )
             log_probs.append(log_prob)
+
+            entropy = torch.cat([dist.entropy() for dist in article_dists])
+            entropys.append(entropy)
+
         log_probs = torch.cat(log_probs)
+        entropys = torch.cat(entropys)
 
         # Return action
-        return actions, log_probs, values
-
-    def evaluate_state_and_action(self, state, action):
-        """
-        Obtain:
-           - the probability of selection `action` when in input state 'state'
-           - the value of the being in input state `state`
-        :param action:
-        :param state:
-        :return:
-        """
-        # Add stop embedding:
-        batch_size = state.shape[0]
-        stop_embeddings = torch.cat([self.stop_embedding] * batch_size)
-        state = torch.cat([state, stop_embeddings], dim=1)
-
-        dist, value = self.policy_net(state)
-        log_prob = dist.log_prob(action)
-        return log_prob, value
+        return actions, log_probs, entropys, values
 
     def get_gae(self, trajectory, lmbda=0.95):
         """
@@ -263,12 +258,12 @@ class RLModel:
         :param lmbda:
         :return:
         """
-        # Todo: replace this codeblock
+        # Todo: replace this codeblock: pass in individual components, not trajectory
         rewards = trajectory[1]
-        values = trajectory[3]
+        values = trajectory[4]
         dummy_next_value = 0  # should get masked out
         values = torch.cat([values, torch.tensor([dummy_next_value]).float()])
-        masks = ~trajectory[4]  # is not terminal
+        masks = ~trajectory[5]  # is not terminal
 
         gae = 0
         returns = []
@@ -276,21 +271,22 @@ class RLModel:
         for step in reversed(range(len(rewards))):
             delta = rewards[step] + self.gamma * values[step + 1] * masks[step] - values[step]
             gae = delta + self.gamma * lmbda * masks[step] * gae
-            returns.insert(0, gae + values[step])
+            returns.insert(0, (gae + values[step]).view(-1))
 
-        returns = torch.tensor(returns)
+        returns = torch.cat(returns)
         return returns
 
     @staticmethod
-    def select_random_batch(actions, log_probs, returns, advantages, mini_batch_size):
+    def select_random_batch(actions, log_probs, entropys, returns, advantages, mini_batch_size):
         random_indicies = np.random.randint(0, len(actions), mini_batch_size)
 
         batch_actions = actions[random_indicies]
         batch_log_probs = log_probs[random_indicies]
+        batch_entropys = entropys[random_indicies]
         batch_returns = returns[random_indicies]
         batch_advantages = advantages[random_indicies]
 
-        return batch_actions, batch_log_probs, batch_returns, batch_advantages
+        return batch_actions, batch_log_probs, batch_entropys, batch_returns, batch_advantages
 
     def create_abstracted_sentences(
             self,
@@ -346,6 +342,7 @@ class RLModel:
         :param target_mask:
         :return:
         Todo: Reward for each action, not just a the end
+        Todo: Reward should require_grad
         """
         rewards = [torch.zeros(ext_sents.shape) for ext_sents in actions]
         n_target_words = target_mask[:, :, 0].sum(dim=1)
@@ -387,64 +384,33 @@ class RLModel:
 
         return torch.cat(action_mask).bool()
 
-    def update(self, state, state_mask, trajectory, clip_val=0.2, n_label_sents=None):
+    def update(self, trajectory):
         """
-        :param state:
-        :param state_mask:
         :param trajectory:
-        :param clip_val:
         :return:
         """
         # Extract from trajectory
-        actions, rewards, old_log_probs, old_values, last_action_mask = trajectory
-        returns = self.get_gae(trajectory)
+        actions, rewards, log_probs, entropys, values, last_action_mask = trajectory
+        returns = self.get_gae(trajectory).detach()
 
         # Obtain advantages
-        advantages = returns - old_values
+        advantages = returns - values
 
-        # Learn for each step in trajectory
-        for _ in range(len(trajectory)):
-            # Get random sample of experiences
-            batch_actions, batch_old_log_probs, batch_returns, batch_advantages = \
-                self.select_random_batch(
-                    actions=actions,
-                    log_probs=old_log_probs,
-                    returns=returns,
-                    advantages=advantages,
-                    mini_batch_size=16
-                )
-            batch_old_log_probs = batch_old_log_probs.detach()
-            batch_actions = batch_actions.detach()
+        actor_loss = -(log_probs * advantages.detach()).mean()
+        critic_loss = advantages.pow(2).mean()
+        loss = actor_loss + 0.5 * critic_loss - 0.001 * entropys.mean()
 
-            new_log_probs, new_values, entropy = self.policy_net.evaluate(
-                state,
-                state_mask,
-                batch_actions,
-                n_label_sents
-            )
-
-            # Calculate loss for actor
-            # Todo: Figure out how to calculate loss (# of actions vs #action_indices
-            ratio = (new_log_probs - batch_old_log_probs.detach()).exp().view(-1, 1)
-            loss1 = ratio * batch_advantages.detach()
-            loss2 = torch.clamp(ratio, 1 - clip_val, 1 + clip_val) * batch_advantages.detach()
-            actor_loss = -torch.min(loss1, loss2).mean()
-
-            # Calculate loss for critic
-            sampled_returns = batch_returns.detach()
-            critic_loss = (new_values - sampled_returns).pow(2).mean()
-
-            # Credit: https://github.com/higgsfield/RL-Adventure-2/blob/master/3.ppo.ipynb
-            overall_loss = 0.5 * critic_loss + actor_loss - 0.001 * entropy
-
-            self.optimizer.zero_grad()
-            overall_loss.backward()
-            self.optimizer.step()
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
 
 class Logit(torch.nn.Module):
     def __init__(self):
         super(Logit, self).__init__()
 
-    def forward(self, x):
-        return torch.log(x / (1 - x))
+    @staticmethod
+    def forward(x):
+        x = torch.max(torch.tensor(1e-6), x)
+        z = torch.log(x / (1 - x))
+        return z

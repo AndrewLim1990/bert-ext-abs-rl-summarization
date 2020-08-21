@@ -12,6 +12,7 @@ import torch
 
 
 def main():
+    torch.autograd.set_detect_anomaly(True)
     training_dictionaries = load_training_dictionaries()
     bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     bert_model = BertModel.from_pretrained('bert-base-uncased')
