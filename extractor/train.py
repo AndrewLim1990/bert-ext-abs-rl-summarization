@@ -1,5 +1,6 @@
 from bert.utils import obtain_sentence_embeddings
 
+import numpy as np
 import pickle
 import torch
 
@@ -58,7 +59,7 @@ def get_training_batch(training_dictionaries, batch_size):
     :param batch_size:
     :return:
     """
-    mini_batch = training_dictionaries[:2]  # np.random.choice(training_dictionaries, batch_size).tolist()
+    mini_batch = np.random.choice(training_dictionaries, batch_size).tolist()
 
     documents, extraction_labels = map(list, zip(*[(s['document'], s['extraction_label']) for s in mini_batch]))
     extraction_labels = torch.nn.utils.rnn.pad_sequence(

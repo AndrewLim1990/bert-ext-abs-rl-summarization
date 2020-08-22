@@ -13,7 +13,7 @@ import torch
 
 def main():
     train_new_extractor = False
-    train_new_abstractor = False
+    train_new_abstractor = True
 
     torch.autograd.set_detect_anomaly(True)
     training_dictionaries = load_training_dictionaries()

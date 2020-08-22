@@ -12,8 +12,7 @@ import torch
 class ActorCritic(torch.nn.Module):
     def __init__(self, extraction_model):
         """
-        Todo: Research to see if Actor and Critic should share some layers
-        Todo: Look into initialization
+        :param extraction_model:
         """
         super(ActorCritic, self).__init__()
 
@@ -89,7 +88,6 @@ class ActorCritic(torch.nn.Module):
             n_actions = action_probs.shape[1]
             stop_action_idx = n_actions - 1  # Previously appended stop_action embedding
             action_indicies, ext_sents, action_dists = list(), list(), list()
-            extraction_mask = torch.ones(action_probs.shape)
 
             # Extract sentences one at a time
             n_ext_sents = 0
@@ -127,7 +125,6 @@ class ActorCritic(torch.nn.Module):
             batch_action_indicies.append(action_indicies)  # Extracted sentence index at each time step
             batch_ext_sents.append(ext_sents)  # Emebddings of extracted sentences at each time step
 
-        # batch_action_dists = list(itertools.chain.from_iterable(batch_action_dists))
         batch_action_indicies = [torch.tensor(article_actions) for article_actions in batch_action_indicies]
 
         return batch_action_dists, batch_action_indicies, batch_ext_sents
@@ -199,8 +196,9 @@ class RLModel(torch.nn.Module):
         # Set attributes
         self.extractor_model = extractor_model
         self.abstractor_model = abstractor_model
-        self.n_features = BERT_OUTPUT_SIZE
         self.softmax = torch.nn.Softmax(dim=1)
+        self.rouge = Rouge()
+        self.n_features = BERT_OUTPUT_SIZE
 
         # Hyper parameters
         self.alpha = alpha
@@ -212,12 +210,6 @@ class RLModel(torch.nn.Module):
         self.policy_net = ActorCritic(
             extraction_model=self.extractor_model
         )
-
-        # Todo: Remove all usages of stop embedding from this method and in rl_connection/train.py
-        # Create stop embedding:
-        self.stop_embedding = torch.nn.Parameter(torch.rand(BERT_OUTPUT_SIZE), requires_grad=True)
-
-        self.rouge = Rouge()
 
         # Optimizer
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.alpha)

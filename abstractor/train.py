@@ -7,7 +7,7 @@ nll_loss = torch.nn.NLLLoss(reduction='none')
 
 
 def train_abstractor(
-        model, data, learning_rate=1e-3, n_iters=100000, model_output_file="results/models/abstractor.pt", save_freq=10
+        model, data, learning_rate=1e-3, n_iters=10000, model_output_file="results/models/abstractor.pt", save_freq=10
 ):
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -49,8 +49,8 @@ def train_abstractor(
         loss.backward()
         optimizer.step()
 
-        # if i % save_freq == 0:
-        #     torch.save(model.state_dict(), model_output_file)
+        if i % save_freq == 0:
+            torch.save(model.state_dict(), model_output_file)
 
     return
 
@@ -61,8 +61,7 @@ def get_training_batch(training_dictionaries, batch_size):
     :param batch_size:
     :return:
     """
-    # Todo: Use randomized batches
-    mini_batch = training_dictionaries[:batch_size]  # np.random.choice(training_dictionaries, batch_size).tolist()
+    mini_batch = np.random.choice(training_dictionaries, batch_size).tolist()
 
     documents, extraction_labels, summaries = map(
         list,
