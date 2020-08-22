@@ -1,7 +1,6 @@
 from bert.utils import obtain_sentence_embeddings
 
 import pickle
-import numpy as np
 import torch
 
 bce_loss = torch.nn.BCELoss(reduction='none')

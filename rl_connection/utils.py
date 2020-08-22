@@ -1,3 +1,4 @@
+from abstractor.train import nll_loss
 from bert.utils import START_OF_SENTENCE_TOKEN
 from bert.utils import obtain_word_embeddings
 from extractor.utils import BERT_OUTPUT_SIZE
@@ -9,13 +10,10 @@ import torch
 
 
 class ActorCritic(torch.nn.Module):
-    def __init__(self, n_features, n_hidden_units, extraction_model):
+    def __init__(self, extraction_model):
         """
         Todo: Research to see if Actor and Critic should share some layers
         Todo: Look into initialization
-        :param n_features:
-        :param n_outputs:
-        :param n_hidden_units:
         """
         super(ActorCritic, self).__init__()
 
@@ -193,9 +191,11 @@ class ActorCritic(torch.nn.Module):
         return batch_values
 
 
-class RLModel:
+class RLModel(torch.nn.Module):
     def __init__(
-            self, extractor_model, abstractor_model, alpha=1e-3, gamma=0.99, batch_size=128):
+            self, extractor_model, abstractor_model, alpha=1e-4, gamma=0.99, batch_size=128
+    ):
+        super(RLModel, self).__init__()
         # Set attributes
         self.extractor_model = extractor_model
         self.abstractor_model = abstractor_model
@@ -210,19 +210,17 @@ class RLModel:
         # Initialize weights
         self.n_hidden_units = 8
         self.policy_net = ActorCritic(
-            n_features=self.n_features,
-            n_hidden_units=self.n_hidden_units,
             extraction_model=self.extractor_model
         )
-
-        # Optimizer
-        self.optimizer = torch.optim.Adam(self.policy_net.parameters(), lr=self.alpha)
 
         # Todo: Remove all usages of stop embedding from this method and in rl_connection/train.py
         # Create stop embedding:
         self.stop_embedding = torch.nn.Parameter(torch.rand(BERT_OUTPUT_SIZE), requires_grad=True)
 
         self.rouge = Rouge()
+
+        # Optimizer
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.alpha)
 
     def sample_actions(self, state, mask):
         """
@@ -322,16 +320,16 @@ class RLModel:
             static_embeddings=False
         )
         # Obtain extraction probability for each word in vocabulary
-        word_probabilities = torch.exp(self.abstractor_model(
+        word_probabilities = self.abstractor_model.forward(
             source_document_embeddings,
             target_summary_embeddings,
             teacher_forcing_pct=teacher_forcing_pct
-        )[0])  # (batch_size, n_target_words, vocab_size)
+        )[0]  # (batch_size, n_target_words, vocab_size)
 
         # Get words with highest probability per time step
         chosen_words = torch.argmax(word_probabilities, dim=2)
 
-        return chosen_words
+        return chosen_words, word_probabilities
 
     def determine_rewards(self, actions, output_sentence, target_sentence, target_mask):
         """
@@ -384,9 +382,32 @@ class RLModel:
 
         return torch.cat(action_mask).bool()
 
-    def update(self, trajectory):
+    def calc_abstractor_loss(self, word_probabilities, target_tokens, target_mask):
+        """
+        :param word_probabilities:
+        :param target_tokens:
+        :param target_mask:
+        :return:
+        """
+        # Shift target tokens and format masks
+        target_mask = torch.flatten(target_mask[:, :, 0])
+
+        target_tokens = torch.roll(target_tokens, dims=1, shifts=-1)  # shift left
+        target_tokens[:, -1] = 0
+        target_tokens = torch.flatten(target_tokens)
+
+        loss = nll_loss(word_probabilities.view(-1, self.abstractor_model.vocab_size), target_tokens)
+        loss = loss * target_mask
+        loss = loss.sum()
+
+        return loss
+
+    def update(self, trajectory, word_probabilities, target_tokens, target_mask):
         """
         :param trajectory:
+        :param word_probabilities:
+        :param target_tokens:
+        :param target_mask:
         :return:
         """
         # Extract from trajectory
@@ -398,11 +419,15 @@ class RLModel:
 
         actor_loss = -(log_probs * advantages.detach()).mean()
         critic_loss = advantages.pow(2).mean()
-        loss = actor_loss + 0.5 * critic_loss - 0.001 * entropys.mean()
+        abstractor_loss = self.calc_abstractor_loss(word_probabilities, target_tokens, target_mask)
+        loss = actor_loss + 0.5 * critic_loss - 0.001 * entropys.mean() + abstractor_loss
+        print(f"RL Loss: {loss}")
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+        return
 
 
 class Logit(torch.nn.Module):

@@ -6,37 +6,49 @@ from extractor.utils import ExtractorModel
 from pytorch_transformers import BertModel
 from pytorch_transformers import BertTokenizer
 from rl_connection.utils import RLModel
-from rl_connection.train import train_system
+from rl_connection.train import train_rl
 
 import torch
 
 
 def main():
+    train_new_extractor = False
+    train_new_abstractor = False
+
     torch.autograd.set_detect_anomaly(True)
     training_dictionaries = load_training_dictionaries()
     bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     bert_model = BertModel.from_pretrained('bert-base-uncased')
 
+    # Obtain extractor model
     extractor_model = ExtractorModel(bert_tokenizer, bert_model)
+    if train_new_extractor:
+        train_extractor(
+            extractor_model,
+            data=training_dictionaries
+        )
+    else:
+        extractor_model_path = "results/models/extractor.pt"
+        extractor_model.load_state_dict(torch.load(extractor_model_path))
 
-    # train_extractor(
-    #     extractor_model,
-    #     data=training_dictionaries
-    # )
-
+    # Obtain abstractor model
     abstractor_model = AbstractorModelRNN(bert_tokenizer, bert_model)
+    if train_new_abstractor:
+        train_abstractor(
+            abstractor_model,
+            data=training_dictionaries
+        )
+    else:
+        abstractor_model_path = "results/models/abstractor.pt"
+        abstractor_model.load_state_dict(torch.load(abstractor_model_path))
 
-    # train_abstractor(
-    #     abstractor_model,
-    #     data=training_dictionaries
-    # )
 
     rl_model = RLModel(
         extractor_model,
         abstractor_model,
     )
 
-    train_system(
+    train_rl(
         rl_model=rl_model,
         data=training_dictionaries
     )

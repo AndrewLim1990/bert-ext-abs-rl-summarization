@@ -49,8 +49,8 @@ def train_abstractor(
         loss.backward()
         optimizer.step()
 
-        if i % save_freq == 0:
-            torch.save(model.state_dict(), model_output_file)
+        # if i % save_freq == 0:
+        #     torch.save(model.state_dict(), model_output_file)
 
     return
 
