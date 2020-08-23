@@ -13,7 +13,7 @@ import torch
 
 def main():
     train_new_extractor = False
-    train_new_abstractor = True
+    train_new_abstractor = False
 
     torch.autograd.set_detect_anomaly(True)
     training_dictionaries = load_training_dictionaries()
@@ -36,12 +36,12 @@ def main():
     if train_new_abstractor:
         train_abstractor(
             abstractor_model,
-            data=training_dictionaries
+            data=training_dictionaries,
+            n_iters=100000
         )
     else:
         abstractor_model_path = "results/models/abstractor.pt"
         abstractor_model.load_state_dict(torch.load(abstractor_model_path))
-
 
     rl_model = RLModel(
         extractor_model,
