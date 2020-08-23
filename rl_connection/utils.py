@@ -224,16 +224,17 @@ class RLModel(torch.nn.Module):
         """
         dists, actions, values = self.policy_net.forward(state, mask)
 
-        # Todo: Combine calculation of entropy + log_prob
         log_probs = list()
         entropys = list()
         for article_dists, article_actions in zip(dists, actions):
-            log_prob = torch.cat(
-                [dist.log_prob(action) for dist, action in zip(article_dists, article_actions)]
-            )
-            log_probs.append(log_prob)
+            log_prob, entropy = zip(*[
+                (dist.log_prob(action), dist.entropy()) for dist, action in zip(article_dists, article_actions)
+            ])
 
-            entropy = torch.cat([dist.entropy() for dist in article_dists])
+            log_prob = torch.cat(log_prob)
+            entropy = torch.cat(entropy)
+
+            log_probs.append(log_prob)
             entropys.append(entropy)
 
         log_probs = torch.cat(log_probs)
@@ -242,25 +243,25 @@ class RLModel(torch.nn.Module):
         # Return action
         return actions, log_probs, entropys, values
 
-    def get_gae(self, trajectory, lmbda=0.95):
+    def get_gae(self, rewards, values, last_action_masks, lmbda=0.95):
         """
-        :param trajectory:
+        Calculates "generalized advantage estimate" (GAE).
+        :param rewards:
+        :param values:
+        :param last_action_masks:
         :param lmbda:
         :return:
         """
-        # Todo: replace this codeblock: pass in individual components, not trajectory
-        rewards = trajectory[1]
-        values = trajectory[4]
         dummy_next_value = 0  # should get masked out
         values = torch.cat([values, torch.tensor([dummy_next_value]).float()])
-        masks = ~trajectory[5]  # is not terminal
+        last_action_masks = ~last_action_masks  # is not terminal
 
         gae = 0
         returns = []
 
         for step in reversed(range(len(rewards))):
-            delta = rewards[step] + self.gamma * values[step + 1] * masks[step] - values[step]
-            gae = delta + self.gamma * lmbda * masks[step] * gae
+            delta = rewards[step] + self.gamma * values[step + 1] * last_action_masks[step] - values[step]
+            gae = delta + self.gamma * lmbda * last_action_masks[step] * gae
             returns.insert(0, (gae + values[step]).view(-1))
 
         returns = torch.cat(returns)
@@ -403,8 +404,12 @@ class RLModel(torch.nn.Module):
         :return:
         """
         # Extract from trajectory
-        actions, rewards, log_probs, entropys, values, last_action_mask = trajectory
-        returns = self.get_gae(trajectory).detach()
+        actions, rewards, log_probs, entropys, values, last_action_masks = trajectory
+        returns = self.get_gae(
+            rewards=rewards,
+            values=values,
+            last_action_masks=last_action_masks
+        ).detach()
 
         # Obtain advantages
         advantages = returns - values
