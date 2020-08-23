@@ -231,14 +231,8 @@ class RLModel(torch.nn.Module):
                 (dist.log_prob(action), dist.entropy()) for dist, action in zip(article_dists, article_actions)
             ])
 
-            log_prob = torch.cat(log_prob)
-            entropy = torch.cat(entropy)
-
-            log_probs.append(log_prob)
-            entropys.append(entropy)
-
-        log_probs = torch.cat(log_probs)
-        entropys = torch.cat(entropys)
+            log_probs.append(torch.cat(log_prob))
+            entropys.append(torch.cat(entropy))
 
         # Return action
         return actions, log_probs, entropys, values
