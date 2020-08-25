@@ -137,54 +137,57 @@ class ActorCritic(torch.nn.Module):
             extracted_sent_embedding: torch.tensor shape ()
         :return: torch.tensor of size (1, n_batch_ext_sents)
         """
-        n_articles = len(batch_extracted_sents)
+        batch_size = len(batch_extracted_sents)
         batch_values = list()
 
         # Iterate over each article
-        for j in range(n_articles):
-            # Obtain single article in batch and its corresponding extracted sentences:
-            state = batch_state[j:j+1]
-            mask = batch_mask[j:j+1]
-            state, mask = self.add_stop_action(state, mask)
-            mask = (1 - mask).bool().unsqueeze(0)
-            state = self.bert_fine_tune(state)  # (1, n_doc_sents, tune_dim)
-            extracted_sents = batch_extracted_sents[j]
+        state, mask = self.add_stop_action(batch_state, batch_mask)
+        mask = (1 - mask).bool().unsqueeze(1)
+        state = self.bert_fine_tune(state)  # (batch_size, n_doc_sents + 1, tune_dim)
+        extracted_sents = batch_extracted_sents
 
-            # Obtain initial input_embedding: "[CLS]"
-            input_embedding = torch.tensor(self.bert_tokenizer.encode(
-                START_OF_SENTENCE_TOKEN
-            )).unsqueeze(0)
-            input_embedding = self.bert_model(input_embedding)[0]
-            input_embedding = self.bert_fine_tune(input_embedding)  # (1, 1, tune_dim)
+        # Obtain initial input_embedding: "[CLS]"
+        input_embedding = torch.tensor(
+            self.bert_tokenizer.encode(START_OF_SENTENCE_TOKEN) * batch_size
+        ).unsqueeze(1)
+        input_embedding = self.bert_model(input_embedding)[0]
+        input_embedding = self.bert_fine_tune(input_embedding)  # (batch_size, 1, tune_dim)
 
-            # Initialize hidden state:
-            hidden = self.init_hidden.unsqueeze(0)  # (1, 1, tune_dim)
+        # Initialize hidden state:
+        hidden = self.init_hidden.unsqueeze(0)
+        hidden = hidden.repeat(batch_size, 1, 1)  # (batch_size, 1, tune_dim)
 
-            # Iterate over each extracted sent: Use PREVIOUSLY extracted sentence to calculate value
-            values = list()
-            n_ext_sents = len(extracted_sents)
-            for i in range(n_ext_sents):
-                # Obtain context (attention weighted document embeddings)
-                attention = torch.bmm(hidden, state.transpose(1, 2))  # (1, 1, n_doc_sents)
-                attention = attention + (mask * -1e6)  # assign low attention to things to mask
-                attention_weight = self.softmax(attention)  # (1, 1, n_doc_sents)
-                context = torch.bmm(attention_weight, state)  # (1, 1, tune_dim)
+        # Obtain input_embeddings:
+        input_embeddings = torch.nn.utils.rnn.pad_sequence([torch.cat(x) for x in extracted_sents], batch_first=True)
+        input_embeddings = self.bert_fine_tune(input_embeddings)
 
-                # Obtain new hidden state
-                rnn_input = torch.cat([input_embedding, context], dim=2)  # (1, 1, tune_dim * 2)
-                __, hidden = self.gru(rnn_input, hidden)
+        # Iterate over each extracted sent: Use PREVIOUSLY extracted sentence to calculate value
+        values = list()
+        n_ext_sents = input_embeddings.shape[1]
+        for i in range(n_ext_sents):
+            # Obtain context (attention weighted document embeddings)
+            attention = torch.bmm(hidden, state.transpose(1, 2))  # (batch_size, 1, n_doc_sents)
+            attention = attention + (mask * -1e6)  # assign low attention to things to mask
+            attention_weight = self.softmax(attention)  # (batch_size, 1, n_doc_sents)
+            context = torch.bmm(attention_weight, state)  # (batch_size, 1, tune_dim)
 
-                # Calculate value
-                value = self.value_layer(hidden)  # (1, 1, 1)
-                values.append(value)
+            # Obtain new hidden state
+            rnn_input = torch.cat([input_embedding, context], dim=2)  # (batch_size, 1, tune_dim * 2)
+            __, hidden = self.gru(rnn_input, hidden.transpose(0, 1))
+            hidden = hidden.transpose(0, 1)  # (batch_size, 1, tune_dim)
 
-                # Obtain PREVIOUSLY extracted sentence
-                input_embedding = extracted_sents[i].unsqueeze(0)
-                input_embedding = self.bert_fine_tune(input_embedding)  # (1, 1, 8)
+            # Calculate value
+            value = self.value_layer(hidden)  # (1, 1, 1)
+            values.append(value)
 
-            batch_values.append(torch.cat(values).view(-1))
+            # Obtain PREVIOUSLY extracted sentence
+            input_embedding = input_embeddings[:, i:i+1, :]
 
-        return batch_values
+        n_ext_sents = [len(x) for x in extracted_sents]
+        values = torch.cat(values, dim=2)
+        values = [vals[:, :n_sents].squeeze() for n_sents, vals in zip(n_ext_sents, values)]
+
+        return values
 
 
 class RLModel(torch.nn.Module):
