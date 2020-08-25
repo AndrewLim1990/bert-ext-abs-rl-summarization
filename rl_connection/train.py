@@ -47,10 +47,10 @@ def train_rl(rl_model, data, n_iters=10000):
 
         # Update RL model
         last_action_mask = rl_model.last_action_mask(actions)
-        actions = torch.cat(actions)
-        rewards = torch.cat(rewards)
-        trajectory = (actions, rewards, log_probs, entropys, values, last_action_mask)
-        rl_model.update(trajectory, word_probabilities, target_tokens, target_mask)
+
+        # Calc trajectories
+        trajectories = list(zip(actions, rewards, log_probs, entropys, values, last_action_mask))
+        rl_model.update(trajectories, word_probabilities, target_tokens, target_mask)
 
         save_freq = 100
         if i % save_freq == 0:

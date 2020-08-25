@@ -15,7 +15,7 @@ def main():
     train_new_extractor = False
     train_new_abstractor = False
 
-    torch.autograd.set_detect_anomaly(True)
+    # torch.autograd.set_detect_anomaly(True)
     training_dictionaries = load_training_dictionaries()
     bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     bert_model = BertModel.from_pretrained('bert-base-uncased')

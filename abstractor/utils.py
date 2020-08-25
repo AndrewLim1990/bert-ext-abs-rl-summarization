@@ -38,14 +38,16 @@ class AbstractorModel(nn.Module):
             param.requires_grad = False
 
     def obtain_word_distribution(self, input_embeddings, encoder_hidden_states):
-        # input_embeddings = self.relu(self.input_layer(input_embeddings))  # (batch_size, n_target_words, attn_dim)
-        # encoder_hidden_states = self.relu(self.encoder_layer(encoder_hidden_states))  # (batch_size, n_src_words, attn_dim)
+        """
+        :param input_embeddings:
+        :param encoder_hidden_states:
+        :return:
+        """
 
         attn_score = torch.bmm(
             input_embeddings,  # (batch_size, n_target_words, attn_dim)
             encoder_hidden_states.transpose(1, 2)  # (batch_size, attn_dim, n_src_words)
         )  # (batch_size, n_target_words, n_src_words)
-        # attn_score = self.relu(attn_score)
         attn_weights = F.softmax(attn_score, dim=2)  # (batch_size, n_target_words, n_src_words)
 
         # Calculate decoder hidden states

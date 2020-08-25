@@ -38,7 +38,7 @@ def obtain_word_embeddings(model, tokenizer, input_documents, static_embeddings=
         last_hidden_state = torch.cat([model(doc.view(-1, 1))[0].transpose(0, 1) for doc in documents])
     else:
         last_hidden_state, pooler_output = model(documents)
-    word_embeddings = last_hidden_state.squeeze()
+    word_embeddings = last_hidden_state
 
     mask = torch.ones(word_embeddings.shape)
 

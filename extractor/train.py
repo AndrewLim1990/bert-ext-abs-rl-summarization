@@ -46,9 +46,9 @@ def train_extractor(
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        if i % save_freq == 0:
-            torch.save(model.state_dict(), model_output_file)
-            pickle.dump(losses, open("results/models/extractor_losses.pkl", "wb"))
+        # if i % save_freq == 0:
+        #     torch.save(model.state_dict(), model_output_file)
+        #     pickle.dump(losses, open("results/models/extractor_losses.pkl", "wb"))
 
     return
 

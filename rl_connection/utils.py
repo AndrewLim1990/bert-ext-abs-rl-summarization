@@ -166,7 +166,7 @@ class ActorCritic(torch.nn.Module):
             for i in range(n_ext_sents):
                 # Obtain context (attention weighted document embeddings)
                 attention = torch.bmm(hidden, state.transpose(1, 2))  # (1, 1, n_doc_sents)
-                attention[mask] = -1e6  # assign low attention to things to mask
+                attention = attention + (mask * -1e6)  # assign low attention to things to mask
                 attention_weight = self.softmax(attention)  # (1, 1, n_doc_sents)
                 context = torch.bmm(attention_weight, state)  # (1, 1, tune_dim)
 
@@ -182,9 +182,8 @@ class ActorCritic(torch.nn.Module):
                 input_embedding = extracted_sents[i].unsqueeze(0)
                 input_embedding = self.bert_fine_tune(input_embedding)  # (1, 1, 8)
 
-            batch_values = batch_values + values
+            batch_values.append(torch.cat(values).view(-1))
 
-        batch_values = torch.cat(batch_values).squeeze()  # (1, n_batch_ext_sents)
         return batch_values
 
 
@@ -366,8 +365,9 @@ class RLModel(torch.nn.Module):
 
         for doc_idx in range(len(action_mask)):
             action_mask[doc_idx][len(actions[doc_idx]) - 1] = 1
+            action_mask[doc_idx] = action_mask[doc_idx].bool()
 
-        return torch.cat(action_mask).bool()
+        return action_mask
 
     def calc_abstractor_loss(self, word_probabilities, target_tokens, target_mask):
         """
@@ -389,34 +389,35 @@ class RLModel(torch.nn.Module):
 
         return loss
 
-    def update(self, trajectory, word_probabilities, target_tokens, target_mask):
+    def update(self, trajectories, word_probabilities, target_tokens, target_mask):
         """
-        :param trajectory:
+        :param trajectories:
         :param word_probabilities:
         :param target_tokens:
         :param target_mask:
         :return:
         """
         # Extract from trajectory
-        actions, rewards, log_probs, entropys, values, last_action_masks = trajectory
-        returns = self.get_gae(
-            rewards=rewards,
-            values=values,
-            last_action_masks=last_action_masks
-        ).detach()
+        for trajectory in trajectories[1:]:
+            actions, rewards, log_probs, entropys, values, last_action_masks = trajectory
+            returns = self.get_gae(
+                rewards=rewards,
+                values=values,
+                last_action_masks=last_action_masks
+            ).detach()
 
-        # Obtain advantages
-        advantages = returns - values
+            # Obtain advantages
+            advantages = returns - values
 
-        actor_loss = -(log_probs * advantages.detach()).mean()
-        critic_loss = advantages.pow(2).mean()
-        abstractor_loss = self.calc_abstractor_loss(word_probabilities, target_tokens, target_mask)
-        loss = actor_loss + 0.5 * critic_loss - 0.001 * entropys.mean() + abstractor_loss
-        print(f"RL Loss: {loss}")
+            actor_loss = -(log_probs * advantages.detach()).mean()
+            critic_loss = advantages.pow(2).mean()
+            abstractor_loss = self.calc_abstractor_loss(word_probabilities, target_tokens, target_mask)
+            loss = actor_loss + 0.5 * critic_loss - 0.001 * entropys.mean() + abstractor_loss
+            print(f"RL Loss: {loss}")
 
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
         return
 
