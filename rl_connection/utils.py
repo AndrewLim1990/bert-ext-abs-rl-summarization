@@ -185,7 +185,7 @@ class ActorCritic(torch.nn.Module):
 
         n_ext_sents = [len(x) for x in extracted_sents]
         values = torch.cat(values, dim=2)
-        values = [vals[:, :n_sents].squeeze() for n_sents, vals in zip(n_ext_sents, values)]
+        values = [vals[:, :n_sents].view(-1) for n_sents, vals in zip(n_ext_sents, values)]
 
         return values
 
