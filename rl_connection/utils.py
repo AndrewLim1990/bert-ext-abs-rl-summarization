@@ -173,7 +173,7 @@ class ActorCritic(torch.nn.Module):
 
             # Obtain new hidden state
             rnn_input = torch.cat([input_embedding, context], dim=2)  # (batch_size, 1, tune_dim * 2)
-            __, hidden = self.gru(rnn_input, hidden.transpose(0, 1))
+            __, hidden = self.gru(rnn_input, hidden.detach().transpose(0, 1))
             hidden = hidden.transpose(0, 1)  # (batch_size, 1, tune_dim)
 
             # Calculate value
@@ -401,7 +401,7 @@ class RLModel(torch.nn.Module):
         :return:
         """
         # Extract from trajectory
-        for trajectory in trajectories[1:]:
+        for idx, trajectory in enumerate(trajectories):
             actions, rewards, log_probs, entropys, values, last_action_masks = trajectory
             returns = self.get_gae(
                 rewards=rewards,
@@ -415,11 +415,14 @@ class RLModel(torch.nn.Module):
             actor_loss = -(log_probs * advantages.detach()).mean()
             critic_loss = advantages.pow(2).mean()
             abstractor_loss = self.calc_abstractor_loss(word_probabilities, target_tokens, target_mask)
-            loss = actor_loss + 0.5 * critic_loss - 0.001 * entropys.mean() + abstractor_loss
+            loss = critic_loss  # actor_loss + 0.5 * critic_loss - 0.001 * entropys.mean() + abstractor_loss
             print(f"RL Loss: {loss}")
 
             self.optimizer.zero_grad()
-            loss.backward()
+            if idx == 0:
+                loss.backward(retain_graph=True)
+            else:
+                loss.backward()
             self.optimizer.step()
 
         return
