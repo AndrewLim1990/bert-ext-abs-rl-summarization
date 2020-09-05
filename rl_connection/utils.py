@@ -56,7 +56,7 @@ class ActorCritic(torch.nn.Module):
 
     def forward(self, state, mask, n_label_sents=None):
         action_dists, action_indicies, ext_sents, n_ext_sents = self.actor_layer(state, mask, n_label_sents)
-        values = self.critic_layer(state, mask, ext_sents, n_ext_sents)
+        values = self.critic_layer(state, mask, ext_sents)
         return action_dists, action_indicies, values, n_ext_sents
 
     def actor_layer(self, batch_state, mask, n_label_sents=None):
@@ -132,7 +132,7 @@ class ActorCritic(torch.nn.Module):
         ext_sents = torch.stack(ext_sents).transpose(0, 1).squeeze()
         return action_dists, action_indicies, ext_sents, n_ext_sents
 
-    def critic_layer(self, batch_state, batch_mask, batch_extracted_sents, n_ext_sents):
+    def critic_layer(self, batch_state, batch_mask, batch_extracted_sents):
         """
         :param batch_state: torch.tensor shape (batch_size, n_doc_sents, bert_dim)
         :param batch_mask: torch.tensor shape (batch_size, n_doc_sents, bert_dim)
@@ -185,8 +185,8 @@ class ActorCritic(torch.nn.Module):
             # Obtain PREVIOUSLY extracted sentence
             input_embedding = input_embeddings[:, i:i+1, :]
 
-        values = torch.cat(values, dim=2)
-        values = [vals[:, :n_sents].view(-1) for n_sents, vals in zip(n_ext_sents, values)]
+        values = torch.cat(values, dim=2).squeeze()
+        # values = [vals[:, :n_sents].view(-1) for n_sents, vals in zip(n_ext_sents, values)]
 
         return values
 
@@ -294,10 +294,11 @@ class RLModel(torch.nn.Module):
 
         return chosen_words, word_probabilities
 
-    def determine_rewards(self, n_ext_sents, output_sentence, target_sentence, target_mask):
+    def determine_rewards(self, n_ext_sents, n_actions, output_sentence, target_sentence, target_mask):
         """
         Uses ROUGE to calculate reward
         :param n_ext_sents:
+        :param n_actions:
         :param output_sentence:
         :param target_sentence:
         :param target_mask:
@@ -305,7 +306,6 @@ class RLModel(torch.nn.Module):
         Todo: Reward for each action, not just a the end
         Todo: Reward should require_grad
         """
-        rewards = [torch.zeros(max(1, n_sents)) for n_sents in n_ext_sents]
         n_target_words = target_mask[:, :, 0].sum(dim=1)
 
         # Convert target sentences indicies into words
@@ -318,9 +318,13 @@ class RLModel(torch.nn.Module):
         scores = self.rouge.get_scores(output_sentence, target_sentence)
         scores = [score['rouge-l']['f'] for score in scores]
 
-        for doc_idx in range(len(rewards)):
+        # Populate rewards tensor
+        n_batches = len(n_ext_sents)
+        rewards = torch.zeros(n_batches, n_actions)
+        for doc_idx in range(n_batches):
             if n_ext_sents[doc_idx] > 0:
-                rewards[doc_idx][n_ext_sents[doc_idx] - 1] = scores[doc_idx]
+                last_ext_sentence_idx = n_ext_sents[doc_idx] - 1
+                rewards[doc_idx][last_ext_sentence_idx] = scores[doc_idx]
 
         return rewards
 
@@ -354,31 +358,37 @@ class RLModel(torch.nn.Module):
         action_mask = action_mask.bool()
         return action_mask
 
-    def get_gae(self, rewards, values, last_action_masks, lmbda=0.95):
+    def get_gae(self, rewards, values, n_ext_sents, lmbda=0.95):
         """
         Calculates "generalized advantage estimate" (GAE).
         :param rewards:
         :param values:
-        :param last_action_masks:
+        :param n_ext_sents:
         :param lmbda:
         :return:
 
         Todo: Determine if we should have the "stop" action as last step or the one before?
         Todo cont: Right now it is the one before.
         """
-        dummy_next_value = 0  # should get masked out
-        values = torch.cat([values, torch.tensor([dummy_next_value]).float()])
-        last_action_masks = ~last_action_masks  # is not terminal
+        batch_size = values.shape[0]
+        dummy_next_value = torch.zeros(batch_size, 1)  # should get masked out
+        values = torch.cat([values, dummy_next_value], dim=1)
 
         gae = 0
+        n_steps = rewards.shape[1]
         returns = []
 
-        for step in reversed(range(len(rewards))):
-            delta = rewards[step] + self.gamma * values[step + 1] * last_action_masks[step] - values[step]
-            gae = delta + self.gamma * lmbda * last_action_masks[step] * gae
-            returns.insert(0, (gae + values[step]).view(-1))
+        for step in reversed(range(n_steps)):
+            not_last_action_mask = step != (n_ext_sents - 1)
+            not_past_last_action_mask = ~(step > (n_ext_sents - 1))
 
-        returns = torch.cat(returns)
+            delta = rewards[:, step] + not_last_action_mask * self.gamma * values[:, step + 1] - values[:, step]
+            gae = delta + not_last_action_mask * self.gamma * lmbda * gae
+            gae = not_past_last_action_mask * (gae + values[:, step])
+            gae = gae.view(1, -1)
+            returns.insert(0, gae)
+
+        returns = torch.cat(returns).T
 
         return returns
 
@@ -402,35 +412,35 @@ class RLModel(torch.nn.Module):
 
         return loss
 
-    def update(self, trajectories, word_probabilities, target_tokens, target_mask):
-        """
-        :param trajectories:
-        :param word_probabilities:
-        :param target_tokens:
-        :param target_mask:
-        :return:
-        """
-        # Extract from trajectory
-        for trajectory in trajectories:
-            actions, rewards, log_probs, entropys, values, last_action_masks = trajectory
-            returns = self.get_gae(
-                rewards=rewards,
-                values=values,
-                last_action_masks=last_action_masks
-            ).detach()
+    def update(
+        self,
+        actions,
+        rewards,
+        log_probs,
+        entropys,
+        values,
+        n_ext_sents,
+        word_probabilities,
+        target_tokens,
+        target_mask
+    ):
+        returns = self.get_gae(
+            rewards=rewards,
+            values=values,
+            n_ext_sents=n_ext_sents
+        ).detach()
 
-            # Obtain advantages
-            advantages = returns - values
+        advantages = returns - values
 
-            actor_loss = -(log_probs * advantages.detach()).mean()
-            critic_loss = advantages.pow(2).mean()
-            abstractor_loss = self.calc_abstractor_loss(word_probabilities, target_tokens, target_mask)
-            loss = actor_loss + 0.5 * critic_loss - 0.001 * entropys.mean() + abstractor_loss
-            print(f"RL Loss: {loss}")
+        actor_loss = -(log_probs * advantages.detach()).mean()
+        critic_loss = advantages.pow(2).mean()
+        abstractor_loss = self.calc_abstractor_loss(word_probabilities, target_tokens, target_mask)
+        loss = actor_loss + 0.5 * critic_loss - 0.001 * entropys.mean() + abstractor_loss
+        print(f"RL Loss: {loss}")
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
         return
 
