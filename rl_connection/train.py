@@ -14,7 +14,7 @@ def train_rl(rl_model, data, n_iters=10000):
     """
     for i in range(n_iters):
         # Obtain batch:
-        source_documents, target_summaries = get_training_batch(data, batch_size=2)
+        source_documents, target_summaries = get_training_batch(data, batch_size=4)
 
         # Obtain embeddings
         source_sentence_embeddings, source_mask = obtain_sentence_embeddings(
@@ -22,7 +22,7 @@ def train_rl(rl_model, data, n_iters=10000):
             rl_model.extractor_model.bert_tokenizer,
             source_documents
         )
-        stop_action_index = source_sentence_embeddings.shape[1]
+
         target_summary_embeddings, target_mask, target_tokens = obtain_word_embeddings(
             rl_model.abstractor_model.bert_model,
             rl_model.abstractor_model.bert_tokenizer,
@@ -30,7 +30,7 @@ def train_rl(rl_model, data, n_iters=10000):
             static_embeddings=True
         )
 
-        # Run trajectory
+        # Obtain exctracted sentences (actions)
         actions, log_probs, entropys, values, n_ext_sents = rl_model.sample_actions(
             source_sentence_embeddings,
             source_mask
@@ -73,7 +73,7 @@ def get_training_batch(training_dictionaries, batch_size):
     :param batch_size:
     :return:
     """
-    mini_batch = training_dictionaries[:batch_size]  # np.random.choice(training_dictionaries, batch_size).tolist()
+    mini_batch = np.random.choice(training_dictionaries, batch_size).tolist()
 
     documents, summaries = map(
         list,

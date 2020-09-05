@@ -132,22 +132,24 @@ class ActorCritic(torch.nn.Module):
         ext_sents = torch.stack(ext_sents).transpose(0, 1).squeeze()
         return action_dists, action_indicies, ext_sents, n_ext_sents
 
-    def critic_layer(self, batch_state, batch_mask, batch_extracted_sents):
+    def critic_layer(self, batch_state, batch_mask, extracted_sents):
         """
         :param batch_state: torch.tensor shape (batch_size, n_doc_sents, bert_dim)
         :param batch_mask: torch.tensor shape (batch_size, n_doc_sents, bert_dim)
-        :param batch_extracted_sents: list(list(extracted_sent_embedding))
+        :param extracted_sents: list(list(extracted_sent_embedding))
             extracted_sent_embedding: torch.tensor shape ()
-        :param n_ext_sents: torch.tensor() where each value reps # of sentences extracted
         :return: torch.tensor of size (1, n_batch_ext_sents)
         """
-        batch_size = len(batch_extracted_sents)
+        is_missing_batch_dim = extracted_sents.dim() < 3
+        if is_missing_batch_dim:
+            extracted_sents = extracted_sents.unsqueeze(0)
+
+        batch_size = len(extracted_sents)
 
         # Iterate over each article
         state, mask = self.add_stop_action(batch_state, batch_mask)
         mask = (1 - mask).bool().unsqueeze(1)
         state = self.bert_fine_tune(state)  # (batch_size, n_doc_sents + 1, tune_dim)
-        extracted_sents = batch_extracted_sents
 
         # Obtain initial input_embedding: "[CLS]"
         input_embedding = torch.tensor(
@@ -185,8 +187,10 @@ class ActorCritic(torch.nn.Module):
             # Obtain PREVIOUSLY extracted sentence
             input_embedding = input_embeddings[:, i:i+1, :]
 
+        # Clean shape of values
         values = torch.cat(values, dim=2).squeeze()
-        # values = [vals[:, :n_sents].view(-1) for n_sents, vals in zip(n_ext_sents, values)]
+        if is_missing_batch_dim:
+            values = values.unsqueeze(0)
 
         return values
 
@@ -408,7 +412,7 @@ class RLModel(torch.nn.Module):
 
         loss = nll_loss(word_probabilities.view(-1, self.abstractor_model.vocab_size), target_tokens)
         loss = loss * target_mask
-        loss = loss.sum()
+        loss = loss.mean()
 
         return loss
 
