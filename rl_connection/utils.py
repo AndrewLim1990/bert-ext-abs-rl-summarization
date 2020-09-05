@@ -6,7 +6,6 @@ from rouge import Rouge
 from torch.distributions import Categorical
 from utils import batched_index_select
 
-import itertools
 import numpy as np
 import torch
 
