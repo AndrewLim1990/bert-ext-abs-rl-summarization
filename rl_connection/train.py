@@ -51,7 +51,6 @@ def train_rl(rl_model, data, n_iters=10000):
 
         # Calc trajectories
         rl_model.update(
-            actions,
             rewards,
             log_probs,
             entropys,
