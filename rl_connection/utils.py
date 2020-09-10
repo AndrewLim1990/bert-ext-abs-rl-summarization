@@ -19,10 +19,11 @@ class ActorCritic(torch.nn.Module):
 
         # Actor
         self.extraction_model = extraction_model  # returns prob of extraction per sentence
-        self.convert_to_dist = torch.nn.Sequential(
-            Logit(),
-            torch.nn.Softmax(dim=1)
-        )
+        # self.convert_to_dist = torch.nn.Sequential(
+        #     Logit(),
+        #     torch.nn.Softmax(dim=1)
+        # )
+        self.convert_to_dist = MaskedSoftmax()
 
         self.softmax = torch.nn.Softmax(dim=2)
         self.sigmoid = torch.nn.Sigmoid()
@@ -96,7 +97,7 @@ class ActorCritic(torch.nn.Module):
         n_ext_sents = 0
         while True:
             # Obtain distribution amongst sentences to extract
-            action_dist = self.convert_to_dist(action_probs)
+            action_dist = self.convert_to_dist(action_probs, mask=action_probs > 0)
             action_dist = Categorical(action_dist)
 
             # Sample sentence to extract
@@ -109,7 +110,7 @@ class ActorCritic(torch.nn.Module):
             action_indicies.append(action_idx)
 
             # Don't select sentence again in future
-            indicies_to_ignore = torch.cat(action_indicies).view(batch_size, -1)
+            indicies_to_ignore = torch.stack(action_indicies).T
             extraction_mask = torch.ones(action_probs.shape)
             batch_idx = [[x] for x in range(batch_size)]
             extraction_mask[batch_idx, indicies_to_ignore] = 0
@@ -275,10 +276,13 @@ class RLModel(torch.nn.Module):
         """
         # Obtain embeddings
         actions = [action_indicies[:n_ext_sent] for action_indicies, n_ext_sent in zip(batch_actions, n_ext_sents)]
-
-        extracted_sentences = [
-            np.array(source_doc)[a].tolist() for source_doc, a in zip(source_documents, actions)
-        ]
+        try:
+            extracted_sentences = [
+                np.array(source_doc)[a].tolist() for source_doc, a in zip(source_documents, actions)
+            ]
+        except:
+            print("UH OH")
+            pass
         source_document_embeddings, __, __ = obtain_word_embeddings(
             self.extractor_model.bert_model,
             self.extractor_model.bert_tokenizer,
@@ -417,7 +421,6 @@ class RLModel(torch.nn.Module):
 
     def update(
         self,
-        actions,
         rewards,
         log_probs,
         entropys,
@@ -454,6 +457,33 @@ class Logit(torch.nn.Module):
 
     @staticmethod
     def forward(x):
-        x = torch.max(torch.tensor(1e-6), x)
+        x = torch.max(torch.tensor(1e-16), x)
         z = torch.log(x / (1 - x))
         return z
+
+
+class MaskedSoftmax(torch.nn.Module):
+    def __init__(self):
+        super(MaskedSoftmax, self).__init__()
+        self.softmax = torch.nn.Softmax(dim=1)
+
+    @staticmethod
+    def forward(x, mask=None):
+        """
+        Performs masked version of softmax
+        Taken from: https://gist.github.com/kaniblu/94f3ede72d1651b087a561cf80b306ca
+        :param x: [batch_size, num_items]
+        :param mask: [batch_size, num_items]
+        :return:
+        """
+        if mask is not None:
+            mask = mask.float()
+        if mask is not None:
+            x_masked = x * mask + (1 - 1 / mask)
+        else:
+            x_masked = x
+        x_max = x_masked.max(1)[0]
+        x_exp = torch.exp(x - x_max.unsqueeze(-1))
+        if mask is not None:
+            x_exp = x_exp * mask.float()
+        return x_exp / x_exp.sum(1).unsqueeze(-1)
