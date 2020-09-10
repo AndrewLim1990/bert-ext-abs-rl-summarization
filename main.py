@@ -47,6 +47,7 @@ def main():
     rl_model = RLModel(
         extractor_model,
         abstractor_model,
+        alpha=1e-3
     )
 
     if continue_rl_training:
