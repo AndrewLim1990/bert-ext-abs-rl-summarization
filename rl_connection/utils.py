@@ -13,35 +13,49 @@ import torch
 class ActorCritic(torch.nn.Module):
     def __init__(self, extraction_model):
         """
-        :param extraction_model:
+        A pytorch torch.nn.Module used to determine which sentences to extract from a source document to be used for
+        summarization
+
+        :param extraction_model: torch.nn.Module used to extract sentences from documents
         """
         super(ActorCritic, self).__init__()
+        # Bert embeddings:
+        self.bert_tokenizer = extraction_model.bert_tokenizer
+        self.bert_model = extraction_model.bert_model
 
-        # Actor
-        self.extraction_model = extraction_model  # returns prob of extraction per sentence
-        # self.convert_to_dist = torch.nn.Sequential(
-        #     Logit(),
-        #     torch.nn.Softmax(dim=1)
-        # )
-        self.convert_to_dist = MaskedSoftmax()
-
-        self.softmax = torch.nn.Softmax(dim=2)
-        self.sigmoid = torch.nn.Sigmoid()
-
-        # Convert bert embeddings to custom embeddings
+        # Convert Bert embeddings to custom embeddings
         self.tune_dim = 8
         self.bert_fine_tune = torch.nn.Linear(BERT_OUTPUT_SIZE, self.tune_dim, bias=False)
 
-        self.bert_tokenizer = extraction_model.bert_tokenizer
-        self.bert_model = extraction_model.bert_model
+        # Embeddings to fine tune:
         self.init_hidden = torch.nn.Parameter(torch.rand(1, self.tune_dim), requires_grad=True)
         self.stop_embedding = torch.nn.Parameter(torch.rand(extraction_model.input_dim), requires_grad=True)
 
+        # Actor Layer
+        self.extraction_model = extraction_model  # returns prob of extraction per sentence
+        self.convert_to_dist = torch.nn.Sequential(
+            Logit(),
+            torch.nn.Softmax(dim=1)
+        )
+        self.softmax = torch.nn.Softmax(dim=2)
+
+        # Critic Layer
         self.gru = torch.nn.GRU(self.tune_dim * 2, self.tune_dim, batch_first=True)
         self.value_layer = torch.nn.Linear(self.tune_dim, 1)
         self.max_n_ext_sents = 4
 
     def add_stop_action(self, state, mask=None):
+        """
+        Extends the input 'state' by placing self.stop_embedding as an additional state/action. Also adjusts 'mask'
+        appropriately such that the additional stop_embedding will not be masked out.
+
+        :param state:   A torch.tensor of sentence embeddings from source documents.
+                        Shape: (batch_size, n_doc_sentences, embedding_dim)
+        :param mask:    A torch.tensor of booleans indicating whether or not the document within the batch actually
+                        has the sentence. This is necessary because we've batched multiple documents together of
+                        various lengths.
+        :return:        Returns a tuple of state and mask with the additional embedding and mask boolean values
+        """
         # Add stop embedding:
         batch_size = state.shape[0]
         stop_embeddings = torch.cat([self.stop_embedding] * batch_size)
@@ -55,20 +69,47 @@ class ActorCritic(torch.nn.Module):
         return state, mask
 
     def forward(self, state, mask, n_label_sents=None):
+        """
+        :param state:           A torch.tensor() containing sentence embeddings for each acticle.
+                                Shape: (batch_size, n_doc_sentences, embedding_dim)
+        :param mask:            A torch.tensor of booleans indicating whether or not the document within the batch
+                                actually has the sentence. This is necessary because we've batched multiple documents
+                                together of various lengths.
+        :param n_label_sents:   An optional list containing number of extracted sentences in summary labels (oracle)
+        :return:                A tuple containing
+                                 - action_dists:    list(Categorical()) containing categorical distributions. Each entry
+                                                    represents the distribution amongst sentences to extract at a given
+                                                    step for all batches.
+                                 - action_indicies: torch.tensor() containing the indicies of extracted sentences
+                                                    Shape: (batch_size, n_extracted_sentences, embedding_dim)
+                                 - values:          A torch.tensor() where each value represents the predicted "value"
+                                                    of being in the input "state". Shape: (
+                                 - n_ext_sents:     A torch.tensor() where entries show # of sentences extracted per
+                                                    sample
+        """
         action_dists, action_indicies, ext_sents, n_ext_sents = self.actor_layer(state, mask, n_label_sents)
         values = self.critic_layer(state, mask, ext_sents)
         return action_dists, action_indicies, values, n_ext_sents
 
     def actor_layer(self, batch_state, mask, n_label_sents=None):
         """
-        :param batch_state:
-        :param mask:
-        :param n_label_sents: list containing number of extracted sentences in summary labels (oracle)
-        :return:
-            action_dists: list(list(Categorical()))
-            action_indicies: list(torch.tensor())
-            ext_sents: list(list(torch.tensor()))
-            n_ext_sents: torch.tensor() where each entry shows the # of sentences extracted per sample
+        Determines which sentences to extract for each of the documents represented by batch_state
+
+        :param batch_state:     A torch.tensor representing sentence embeddings of each document within the batch.
+                                Shape: (batch_size, n_doc_sentences, embedding_dim)
+        :param mask:            A torch.tensor of booleans indicating whether or not the document within the batch
+                                actually has the sentence. This is necessary because we've batched multiple documents
+                                together of various lengths.
+        :param n_label_sents:   An optional list containing number of extracted sentences in summary labels (oracle)
+        :return:                A tuple containing:
+                                 - action_dists: list(Categorical()) containing categorical distributions. Each entry
+                                                 represents the distribution amongst sentences to extract at a given
+                                                 step for all batches.
+                                 - action_indicies: torch.tensor() containing the indicies of extracted sentences
+                                                    Shape: (batch_size, n_extracted_sentences, embedding_dim)
+                                 - ext_sents: A torch.tensor() containing extracted sentence embeddings.
+                                              Shape: (batch_size, n_extracted_sentences, embedding_dim)
+                                 - n_ext_sents: A torch.tensor() where entries show # of sentences extracted per sample
         """
         # Obtain distribution amongst actions
         batch_state, mask = self.add_stop_action(batch_state, mask)
@@ -97,7 +138,7 @@ class ActorCritic(torch.nn.Module):
         n_ext_sents = 0
         while True:
             # Obtain distribution amongst sentences to extract
-            action_dist = self.convert_to_dist(action_probs, mask=action_probs > 0)
+            action_dist = self.convert_to_dist(action_probs)
             action_dist = Categorical(action_dist)
 
             # Sample sentence to extract
@@ -134,11 +175,17 @@ class ActorCritic(torch.nn.Module):
 
     def critic_layer(self, batch_state, batch_mask, extracted_sents):
         """
-        :param batch_state: torch.tensor shape (batch_size, n_doc_sents, bert_dim)
-        :param batch_mask: torch.tensor shape (batch_size, n_doc_sents, bert_dim)
-        :param extracted_sents: list(list(extracted_sent_embedding))
-            extracted_sent_embedding: torch.tensor shape ()
-        :return: torch.tensor of size (1, n_batch_ext_sents)
+        Todo: Might want to replace batch_state + extracted_sents with hidden states produced by the extractor
+        Predicts the 'value' of the input state and action
+
+        :param batch_state:     A torch.tensor representing sentence embeddings of each document within the batch.
+                                Shape: (batch_size, n_doc_sentences, embedding_dim)
+        :param batch_mask:      A torch.tensor of booleans indicating whether or not the document within the batch
+                                actually has the sentence. This is necessary because we've batched multiple documents
+                                together of various lengths. Shape: (batch_size, n_doc_sentences)
+        :param extracted_sents: A torch.tensor containing extracted sentence embeddings.
+                                Shape: (batch_size, n_extracted_sentences, embedding_dim)
+        :return: A torch.tensor containing estimated values. Shape (batch_size, n_extracted_sentences)
         """
         is_missing_batch_dim = extracted_sents.dim() < 3
         if is_missing_batch_dim:
@@ -171,7 +218,7 @@ class ActorCritic(torch.nn.Module):
         for i in range(max_ext_sents):
             # Obtain context (attention weighted document embeddings)
             attention = torch.bmm(hidden, state.transpose(1, 2))  # (batch_size, 1, n_doc_sents)
-            attention = attention + (mask * -1e6)  # assign low attention to things to mask
+            attention = attention + (mask * -1e16)  # assign low attention to things to mask
             attention_weight = self.softmax(attention)  # (batch_size, 1, n_doc_sents)
             context = torch.bmm(attention_weight, state)  # (batch_size, 1, tune_dim)
 
@@ -181,7 +228,7 @@ class ActorCritic(torch.nn.Module):
             hidden = hidden.transpose(0, 1)  # (batch_size, 1, tune_dim)
 
             # Calculate value
-            value = self.value_layer(hidden)  # (1, 1, 1)
+            value = self.value_layer(hidden)  # (batch_size, 1, 1)
             values.append(value)
 
             # Obtain PREVIOUSLY extracted sentence
@@ -199,6 +246,15 @@ class RLModel(torch.nn.Module):
     def __init__(
             self, extractor_model, abstractor_model, alpha=1e-4, gamma=0.99, batch_size=128
     ):
+        """
+        A torch.nn.Module meant to output which sentences to extract in order to form high quality abstract summaries
+
+        :param extractor_model:     A pretrained torch.nn.Module to select sentences to extract from source documents
+        :param abstractor_model:    A pretrained torch.nn.Module to convert extracted sentences into abstract summaries
+        :param alpha:               Learning rate
+        :param gamma:               Reinforcement learning discount factor
+        :param batch_size:          Number of documents to include in each training batch
+        """
         super(RLModel, self).__init__()
         # Set attributes
         self.extractor_model = extractor_model
@@ -223,11 +279,23 @@ class RLModel(torch.nn.Module):
 
     def sample_actions(self, state, mask):
         """
-        Returns an actions for an entire trajectory
+        Returns actions (extracted sentence indicies)
 
-        :param state:
-        :param mask:
-        :return:
+        :param state: A torch.tensor of sentence embeddings for each document.
+                      Shape: (batch_size, n_doc_sentences, embedding_dim)
+        :param mask:  A torch.tensor of booleans indicating the existance of a sentence within the batch.
+                      Shape: (batch_size, n_doc_sentences)
+        :return:      A tuple consisting of:
+                      - actions:     torch.tensor containing indicies of sentence to extract.
+                                     Shape: (batch_size, n_ext_sentences)
+                      - log_probs:   torch.tensor containing log probability of extracting the extracted sentences
+                                     Shape: (batch_size, n_ext_sentences)
+                      - entropys:    torch.tensor containing entropy of the distribution used to obtain actions
+                                     Shape: (batch_size, n_ext_sentences)
+                      - values:      A torch.tensor containing estimated values of being in each state and taking
+                                     returned actions. Shape: (batch_size, n_extracted_sentences)
+                      - n_ext_sents: A torch.tensor containing the # of sentences extracted per source_document
+                                     Shape: batch_size
         """
         dists, actions, values, n_ext_sents = self.policy_net.forward(state, mask)
 
@@ -246,18 +314,6 @@ class RLModel(torch.nn.Module):
         # Return action
         return actions, log_probs, entropys, values, n_ext_sents
 
-    @staticmethod
-    def select_random_batch(actions, log_probs, entropys, returns, advantages, mini_batch_size):
-        random_indicies = np.random.randint(0, len(actions), mini_batch_size)
-
-        batch_actions = actions[random_indicies]
-        batch_log_probs = log_probs[random_indicies]
-        batch_entropys = entropys[random_indicies]
-        batch_returns = returns[random_indicies]
-        batch_advantages = advantages[random_indicies]
-
-        return batch_actions, batch_log_probs, batch_entropys, batch_returns, batch_advantages
-
     def create_abstracted_sentences(
             self,
             batch_actions,
@@ -267,22 +323,27 @@ class RLModel(torch.nn.Module):
             target_summary_embeddings=None,
     ):
         """
-        :param batch_actions:
-        :param source_documents:
-        :param n_ext_sents:
-        :param teacher_forcing_pct:
-        :param target_summary_embeddings:
-        :return:
+        Creates a summary from extracted sentences indicated by batch_actions
+
+        :param batch_actions: A torch.tensor containing the indicies of sentences to extract
+        :param source_documents: A list(list(document_sentences))
+        :param n_ext_sents: A torch.tensor containing the # of sentences extracted per document
+        :param teacher_forcing_pct: Percentage of the time to use directly use target_summary_embeddings
+        :param target_summary_embeddings: A torch.tensor containing embeddings of each word within the target summary
+                                          (oracle). Shape: (batch_size, n_summary_label_words, embedding_dim)
+        :return: A tuple containing:
+                - chosen_words: torch.tensor containing corpus indicies of words to use in summary.
+                                Shape: (batch_size, n_summary_predicted_words)
+                - word_probabilities: torch.tensor containing the probability of extracting each word in corpus.
+                                      Shape: (batch_size, n_summary_predicted_words, n_words_in_corpus)
         """
         # Obtain embeddings
         actions = [action_indicies[:n_ext_sent] for action_indicies, n_ext_sent in zip(batch_actions, n_ext_sents)]
-        try:
-            extracted_sentences = [
-                np.array(source_doc)[a].tolist() for source_doc, a in zip(source_documents, actions)
-            ]
-        except:
-            print("UH OH")
-            pass
+
+        # Obtain actual string sentences that were exctracted
+        extracted_sentences = [
+            np.array(source_doc)[a].tolist() for source_doc, a in zip(source_documents, actions)
+        ]
         source_document_embeddings, __, __ = obtain_word_embeddings(
             self.extractor_model.bert_model,
             self.extractor_model.bert_tokenizer,
@@ -304,14 +365,15 @@ class RLModel(torch.nn.Module):
     def determine_rewards(self, n_ext_sents, n_actions, output_sentence, target_sentence, target_mask):
         """
         Uses ROUGE to calculate reward
-        :param n_ext_sents:
-        :param n_actions:
-        :param output_sentence:
-        :param target_sentence:
-        :param target_mask:
-        :return:
-        Todo: Reward for each action, not just a the end
-        Todo: Reward should require_grad
+
+        :param n_ext_sents:     A torch.tensor with # of sentences extracted
+        :param n_actions:       An int indicating the number of sentences extracted
+        :param output_sentence: A torch.tensor containing corpus word indicies that have been chosen
+        :param target_sentence: A torch.tensor containing corpur word indicies of label (oracle)
+        :param target_mask:     A torch.tensor of bools indicating if word is present in summary
+                                (required because working in batches)
+        :return:                A torch.tensor containing the rewards for each extracted sentence
+                                Shape: (batch_size, n_extracted_sentences)
         """
         n_target_words = target_mask[:, :, 0].sum(dim=1)
 
@@ -335,12 +397,19 @@ class RLModel(torch.nn.Module):
 
         return rewards
 
-    def convert_to_words(self, sentence_indicies, n_target_words):
-        sentence_indicies = torch.roll(sentence_indicies, dims=1, shifts=-1)  # shift left
+    def convert_to_words(self, word_indicies, n_target_words):
+        """
+        Converts a batch of word indicies into a list of lists containing the string associated with each index
+
+        :param word_indicies: A torch.tensor containing corpus word indicies. Shape: (batch_size, n_words)
+        :param n_target_words: A torch.tensor indicating the number of words within each label summary (oracle)
+        :return: A list(list(str)) containing the words
+        """
+        word_indicies = torch.roll(word_indicies, dims=1, shifts=-1)  # shift left
         bert_tokenizer = self.abstractor_model.bert_tokenizer
 
         sentence_words = [
-            bert_tokenizer.convert_ids_to_tokens(idx) for idx in sentence_indicies.tolist()
+            bert_tokenizer.convert_ids_to_tokens(idx) for idx in word_indicies.tolist()
         ]
 
         n_target_words = n_target_words.int()
@@ -348,34 +417,15 @@ class RLModel(torch.nn.Module):
 
         return sentence_words
 
-    @staticmethod
-    def last_action_mask(actions, n_ext_sents):
-        """
-        Todo: Figure out if should cumsum roll masks forward
-        :param actions:
-        :param n_ext_sents:
-        :return:
-        """
-        action_mask = torch.zeros(actions.shape)
-        max_action_idx = torch.tensor(actions.shape[1]) - 1
-        for doc_idx in range(len(action_mask)):
-            n_sents = torch.min(max_action_idx, n_ext_sents[doc_idx])
-            action_mask[doc_idx][n_sents] = 1
-
-        action_mask = action_mask.bool()
-        return action_mask
-
     def get_gae(self, rewards, values, n_ext_sents, lmbda=0.95):
         """
         Calculates "generalized advantage estimate" (GAE).
-        :param rewards:
-        :param values:
-        :param n_ext_sents:
-        :param lmbda:
-        :return:
 
-        Todo: Determine if we should have the "stop" action as last step or the one before?
-        Todo cont: Right now it is the one before.
+        :param rewards: A torch.tensor containing rewards obtained for each extracted sentence
+        :param values: A torch.tensor containing predicted values of each state
+        :param n_ext_sents: A torch.tensor containing number of sentences extracted per document within batcn
+        :param lmbda: Hyper-parameter to adjust GAE calculation
+        :return: A torch.tensor containing the GAE values for each sentence extracted
         """
         batch_size = values.shape[0]
         dummy_next_value = torch.zeros(batch_size, 1)  # should get masked out
@@ -401,10 +451,12 @@ class RLModel(torch.nn.Module):
 
     def calc_abstractor_loss(self, word_probabilities, target_tokens, target_mask):
         """
-        :param word_probabilities:
-        :param target_tokens:
-        :param target_mask:
-        :return:
+        Calculates the loss associated with suboptimal words chosen during abstraction
+
+        :param word_probabilities: torch.tensor containing probs of words being selected
+        :param target_tokens: torch.tensor containing the corpus word index of each word in label summary (oracle)
+        :param target_mask: torch.tensor indicating whether the word was present in summary (required because batches)
+        :return: loss associated with with input word_probabilities
         """
         # Shift target tokens and format masks
         target_mask = torch.flatten(target_mask[:, :, 0])
@@ -430,6 +482,19 @@ class RLModel(torch.nn.Module):
         target_tokens,
         target_mask
     ):
+        """
+        Updates the extraction (actor + critic) and abstraction layers iteratively
+
+        :param rewards: torch.tensor containing rewards for each extracted sentence
+        :param log_probs: torch.tensor containing log prob of extracting each word at each time step
+        :param entropys: torch.tensor containing the entropy of the distribution at each time step of extraction
+        :param values: torch.tensor containing predicted values of being in the associated state
+        :param n_ext_sents: torch.tensor containing the # of sentence chosen for extraction
+        :param word_probabilities: torch.tensor containing the probability of a word being chosen for abstraction
+        :param target_tokens: torch.tensor containing indicies of corpus words in label summary (oracle)
+        :param target_mask: torch.tensor indicating whether or not the word exists in the label summary
+                            (required because working in batches)
+        """
         returns = self.get_gae(
             rewards=rewards,
             values=values,
@@ -448,42 +513,21 @@ class RLModel(torch.nn.Module):
         loss.backward()
         self.optimizer.step()
 
-        return
-
 
 class Logit(torch.nn.Module):
     def __init__(self):
+        """
+        Applies a logit function robust to x=0
+        """
         super(Logit, self).__init__()
 
     @staticmethod
     def forward(x):
+        """
+        Applies a logit function robust to x=0
+        :param x: float value satisfying: 0 <= x < 1
+        :return: the logit of input x
+        """
         x = torch.max(torch.tensor(1e-16), x)
         z = torch.log(x / (1 - x))
         return z
-
-
-class MaskedSoftmax(torch.nn.Module):
-    def __init__(self):
-        super(MaskedSoftmax, self).__init__()
-        self.softmax = torch.nn.Softmax(dim=1)
-
-    @staticmethod
-    def forward(x, mask=None):
-        """
-        Performs masked version of softmax
-        Taken from: https://gist.github.com/kaniblu/94f3ede72d1651b087a561cf80b306ca
-        :param x: [batch_size, num_items]
-        :param mask: [batch_size, num_items]
-        :return:
-        """
-        if mask is not None:
-            mask = mask.float()
-        if mask is not None:
-            x_masked = x * mask + (1 - 1 / mask)
-        else:
-            x_masked = x
-        x_max = x_masked.max(1)[0]
-        x_exp = torch.exp(x - x_max.unsqueeze(-1))
-        if mask is not None:
-            x_exp = x_exp * mask.float()
-        return x_exp / x_exp.sum(1).unsqueeze(-1)
