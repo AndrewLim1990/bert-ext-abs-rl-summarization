@@ -52,6 +52,7 @@ class ExtractorModel(nn.Module):
         Todo: Convert from "dot" attention mechanism to "additive" to match paper
         Todo: Reference for the above Todo: http://web.stanford.edu/class/cs224n/slides/cs224n-2020-lecture08-nmt.pdf
         Todo: Provide better comments than labeling Eq numbers from paper
+        Todo: Might be better to return intermediate hidden states in order to calculate values for RL
 
         :param input_embeddings: shape (n_documents, seq_len, embedding_dim)
         :return: torch.tensor containing probability of extration of each sentence
@@ -59,17 +60,17 @@ class ExtractorModel(nn.Module):
         h, __ = self.bi_lstm(input_embeddings)
         z, __ = self.ptr_lstm(h)
 
-        # Eq (3) Todo: Replace "dot" attention mechanism w/ "additive" like in paper
-        attn = torch.bmm(h, z.transpose(1, 2))  # Dot attention mechanism
+        # Eq (3)
+        attn_values = torch.bmm(h, z.transpose(1, 2))  # Dot attention mechanism
 
         # Eq (4)
-        attn_weights = self.softmax(attn)
+        self_attn_weights = self.softmax(attn_values)
 
         # Eq (5)
-        e = torch.bmm(attn_weights, h)
+        context = torch.bmm(self_attn_weights, h)
 
         # Eq (1)
-        u = self.linear_h(h) + self.linear_e(e)
+        u = self.linear_h(h) + self.linear_e(context)
         u = self.tanh(u)
         u = self.linear_v(u)
 
