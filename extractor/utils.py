@@ -1,7 +1,6 @@
 from bert.utils import BERT_OUTPUT_SIZE
+from collections import defaultdict
 from torch import nn
-from pytorch_transformers import BertModel
-from pytorch_transformers import BertTokenizer
 from utils import compute_rouge_l
 
 import torch
@@ -42,12 +41,15 @@ class ExtractorModel(nn.Module):
         self.linear_v = torch.nn.Linear(attn_dim, 1, bias=False)
         self.tanh = torch.nn.Tanh()
 
+        # Initial sentence embedding:
+        self.init_sent_embedding = torch.nn.Parameter(torch.rand(1, attn_dim), requires_grad=True)
+
     @staticmethod
     def freeze_weights(model):
         for param in model.parameters():
             param.requires_grad = False
 
-    def forward(self, input_embeddings):
+    def forward(self, input_embeddings, extraction_labels=None):
         """
         Todo: Convert from "dot" attention mechanism to "additive" to match paper
         Todo: Reference for the above Todo: http://web.stanford.edu/class/cs224n/slides/cs224n-2020-lecture08-nmt.pdf
@@ -55,8 +57,10 @@ class ExtractorModel(nn.Module):
         Todo: Might be better to return intermediate hidden states in order to calculate values for RL
 
         :param input_embeddings: shape (n_documents, seq_len, embedding_dim)
+        :param extraction_labels: torch.tensor indicating whether or not the sentence should be extracted (oracle)
         :return: torch.tensor containing probability of extration of each sentence
         """
+        # Add a random "[start_sentence]" embedding to the start of input_embeddings
         h, __ = self.bi_lstm(input_embeddings)
         z, __ = self.ptr_lstm(h)
 
@@ -68,14 +72,24 @@ class ExtractorModel(nn.Module):
 
         # Eq (5)
         context = torch.bmm(self_attn_weights, h)
+        batch_indicies, sent_indicies = torch.where(extraction_labels)
+        label_indicies_dict = defaultdict(list)
+        for row, pos in zip(batch_indicies, sent_indicies):
+            label_indicies_dict[row.item()].append(pos.item())
 
-        # Eq (1)
-        u = self.linear_h(h) + self.linear_e(context)
-        u = self.tanh(u)
-        u = self.linear_v(u)
+        n_batches = h.shape[0]
+        p = list()
+        for batch_idx in range(n_batches):
 
-        # Eq (2)
-        p = self.sigmoid(u).squeeze()
+            selected_context = context[batch_idx][label_indicies_dict[batch_idx]]
+            selected_context = torch.cat([self.init_sent_embedding, selected_context])
+
+            u = self.linear_h(h[batch_idx]) + self.linear_e(selected_context).unsqueeze(1)
+            u = self.tanh(u)
+            u = self.linear_v(u)
+            p.append(self.sigmoid(u).squeeze())
+
+        p = torch.nn.utils.rnn.pad_sequence(p, batch_first=True)
 
         return p
 

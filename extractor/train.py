@@ -33,9 +33,11 @@ def train_extractor(
         sentence_embeddings, mask = obtain_sentence_embeddings(model.bert_model, model.bert_tokenizer, documents)
 
         # Predict probability of extraction per sentence
-        extraction_probabilities = model(sentence_embeddings)
+        extraction_probabilities = model(sentence_embeddings, extraction_labels=extraction_labels)
 
         # Calculate loss
+        # Todo: make sure calc'ing loss for CORRECT positions
+        #  - should be calc'ing loss based off the sentences extracted
         loss = bce_loss(input=extraction_probabilities, target=extraction_labels)
         loss = loss * mask
         loss = loss.sum()
