@@ -93,6 +93,7 @@ class ActorCritic(torch.nn.Module):
 
     def actor_layer(self, batch_state, mask, n_label_sents=None):
         """
+        Todo: use self.extraction_model.forward() on the
         Determines which sentences to extract for each of the documents represented by batch_state
 
         :param batch_state:     A torch.tensor representing sentence embeddings of each document within the batch.
