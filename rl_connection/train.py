@@ -61,9 +61,9 @@ def train_rl(rl_model, data, n_iters=10000):
             target_mask
         )
 
-        save_freq = 100
-        if i % save_freq == 0:
-            torch.save(rl_model.state_dict(), "results/models/rl.pt")
+        # save_freq = 100
+        # if i % save_freq == 0:
+        #     torch.save(rl_model.state_dict(), "results/models/rl.pt")
 
 
 def get_training_batch(training_dictionaries, batch_size):
