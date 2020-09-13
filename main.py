@@ -12,9 +12,9 @@ import torch
 
 
 def main():
-    train_new_extractor = False
+    train_new_extractor = True
     train_new_abstractor = False
-    continue_rl_training = False
+    continue_rl_training = True
 
     # torch.autograd.set_detect_anomaly(True)
     training_dictionaries = load_training_dictionaries()
@@ -47,7 +47,7 @@ def main():
     rl_model = RLModel(
         extractor_model,
         abstractor_model,
-        alpha=1e-3
+        alpha=1e-4
     )
 
     if continue_rl_training:
