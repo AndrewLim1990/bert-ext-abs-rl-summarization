@@ -5,6 +5,7 @@ from extractor.utils import BERT_OUTPUT_SIZE
 from rouge import Rouge
 from torch.distributions import Categorical
 from utils import batched_index_select
+from utils import logit
 
 import numpy as np
 import torch
@@ -35,7 +36,7 @@ class ActorCritic(torch.nn.Module):
         self.extraction_model = extraction_model  # returns prob of extraction per sentence
         self.convert_to_dist = torch.nn.Sequential(
             Logit(),
-            torch.nn.Softmax(dim=1)
+            torch.nn.Softmax(dim=-1)
         )
         self.softmax = torch.nn.Softmax(dim=2)
 
@@ -93,7 +94,6 @@ class ActorCritic(torch.nn.Module):
 
     def actor_layer(self, batch_state, mask, n_label_sents=None):
         """
-        Todo: use self.extraction_model.forward() on the
         Determines which sentences to extract for each of the documents represented by batch_state
 
         :param batch_state:     A torch.tensor representing sentence embeddings of each document within the batch.
@@ -114,11 +114,9 @@ class ActorCritic(torch.nn.Module):
         """
         # Obtain distribution amongst actions
         batch_state, mask = self.add_stop_action(batch_state, mask)
-        action_probs = self.extraction_model.forward(batch_state)  # prob of extraction per sentence (binary)
-        action_probs = action_probs * mask
 
         # Obtain number of samples in batch
-        batch_size = action_probs.shape[0]
+        batch_size = batch_state.shape[0]
 
         # Obtain maximum number of sentences to extract
         if n_label_sents is None:
@@ -130,33 +128,55 @@ class ActorCritic(torch.nn.Module):
 
         # Create variables to stop extraction loop
         max_n_ext_sents = batch_max_n_ext_sents.max()  # Maximum number of sentences to extract
-        n_actions = action_probs.shape[1]
+        n_actions = batch_state.shape[1]
         stop_action_idx = n_actions - 1  # Previously appended stop_action embedding
         is_stop_action = torch.zeros(batch_size).bool()
 
         # Extraction loop
         action_indicies, ext_sents, action_dists, stop_action_list = list(), list(), list(), list()
         n_ext_sents = 0
+        is_first_sent = True
+        extraction_labels = None
         while True:
             # Obtain distribution amongst sentences to extract
+            if is_first_sent:
+                action_probs, __ = self.extraction_model.forward(batch_state, mask)
+                is_first_sent = False
+            else:
+                action_probs, action_mask = self.extraction_model.forward(
+                    sent_embeddings=batch_state,
+                    sent_mask=mask,
+                    extraction_indicator=extraction_labels,
+                    use_init_embedding=False
+                )
+
+            # Don't select already extracted sentences
+            # Todo: Fix this, something is wrong with the shapes.
+            if action_indicies:
+                indicies_to_ignore = torch.cat(action_indicies).T
+                extraction_mask = torch.ones(action_probs.shape)
+                batch_idx = [[x] for x in range(batch_size)]
+                extraction_mask[batch_idx, 0, indicies_to_ignore] = 0
+                action_probs = action_probs * extraction_mask
+
+            # For probability distribution
             action_dist = self.convert_to_dist(action_probs)
             action_dist = Categorical(action_dist)
 
             # Sample sentence to extract
-            action_idx = action_dist.sample()  # index of sentence to extract
+            action_idx = action_dist.sample().T
+
+            # Form extraction_labels Todo: rename
+            extraction_labels = torch.zeros(batch_state.shape[:2])
+            extraction_labels[torch.arange(batch_state.shape[0]), action_idx] = 1
+
+            # index of sentence to extract
             ext_sent = batched_index_select(batch_state, 1, action_idx)
 
             # Collect
             action_dists.append(action_dist)
             ext_sents.append(ext_sent)
             action_indicies.append(action_idx)
-
-            # Don't select sentence again in future
-            indicies_to_ignore = torch.stack(action_indicies).T
-            extraction_mask = torch.ones(action_probs.shape)
-            batch_idx = [[x] for x in range(batch_size)]
-            extraction_mask[batch_idx, indicies_to_ignore] = 0
-            action_probs = action_probs * extraction_mask
 
             # Track number of sentences extracted from article
             n_ext_sents = n_ext_sents + 1
@@ -169,14 +189,13 @@ class ActorCritic(torch.nn.Module):
             if all_samples_stop or is_long_enough:
                 break
 
-        action_indicies = torch.stack(action_indicies).T
-        n_ext_sents = (~torch.stack(stop_action_list).T).sum(dim=1)
+        action_indicies = torch.stack(action_indicies).T.squeeze(1)
+        n_ext_sents = (~torch.stack(stop_action_list).squeeze(1).T).sum(dim=1)
         ext_sents = torch.stack(ext_sents).transpose(0, 1).squeeze()
         return action_dists, action_indicies, ext_sents, n_ext_sents
 
     def critic_layer(self, batch_state, batch_mask, extracted_sents):
         """
-        Todo: Might want to replace batch_state + extracted_sents with hidden states produced by the extractor
         Predicts the 'value' of the input state and action
 
         :param batch_state:     A torch.tensor representing sentence embeddings of each document within the batch.
@@ -529,6 +548,4 @@ class Logit(torch.nn.Module):
         :param x: float value satisfying: 0 <= x < 1
         :return: the logit of input x
         """
-        x = torch.max(torch.tensor(1e-16), x)
-        z = torch.log(x / (1 - x))
-        return z
+        return logit(x)

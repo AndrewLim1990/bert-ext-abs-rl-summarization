@@ -14,7 +14,7 @@ import torch
 def main():
     train_new_extractor = True
     train_new_abstractor = False
-    continue_rl_training = True
+    continue_rl_training = False
 
     # torch.autograd.set_detect_anomaly(True)
     training_dictionaries = load_training_dictionaries()

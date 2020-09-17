@@ -63,3 +63,14 @@ def batched_index_select(input, dim, index):
     expanse[dim] = -1
     index = index.view(views).expand(expanse)
     return torch.gather(input, dim, index)
+
+
+def logit(x):
+    """
+    Applies a logit function robust to x=0
+    :param x: float value satisfying: 0 <= x < 1
+    :return: the logit of input x
+    """
+    x = torch.max(torch.tensor(1e-16), x)
+    z = torch.log(x / (1 - x))
+    return z

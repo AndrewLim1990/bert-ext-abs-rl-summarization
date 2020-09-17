@@ -67,7 +67,6 @@ def obtain_sentence_embedding(model, tokenizer, input_sentence):
 
 def obtain_sentence_embeddings(model, tokenizer, documents):
     """
-    # Todo: Make more efficient than two for loops
     :param model:
     :param tokenizer:
     :param documents:
