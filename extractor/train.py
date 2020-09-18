@@ -24,7 +24,6 @@ def train_extractor(
     :param n_iters: number of iterations to train for
     :param model_output_file: Directory to save ExtractorModel
     :param save_freq: An int indicating how often to save the ExtractorModel
-    :return:
     """
     optimizer = torch.optim.Adam(ext_model.parameters(), lr=learning_rate)
     losses = list()
@@ -59,8 +58,6 @@ def train_extractor(
         optimizer.step()
         if i % save_freq == 0:
             torch.save(ext_model.state_dict(), model_output_file)
-
-    return
 
 
 def get_training_batch(training_dictionaries, batch_size):
