@@ -1,6 +1,7 @@
 from torch.nn.utils.rnn import pad_sequence
 
 import numpy as np
+import pickle
 import torch
 
 BERT_OUTPUT_SIZE = 768
@@ -65,7 +66,13 @@ def obtain_sentence_embedding(model, tokenizer, input_sentence):
     return cls_embedding
 
 
-def obtain_sentence_embeddings(model, tokenizer, documents):
+def obtain_sentence_embeddings(
+        model,
+        tokenizer,
+        documents,
+        data_dir='data/extractor_data/training_embeddings/{}',
+        load_old=True
+):
     """
     :param model:
     :param tokenizer:
@@ -76,13 +83,23 @@ def obtain_sentence_embeddings(model, tokenizer, documents):
                     have the maximum number of sentences within the batch.
     """
     n_docs = len(documents)
-    cls_embeddings = [torch.cat([
-        obtain_sentence_embedding(model, tokenizer, sentence) for sentence in doc
-    ]) for doc in documents]  # list w/ length=n_docs and items w/ shape=(n_sentences, dim_bert))
+    cls_embeddings = list()
 
+    if load_old:
+        for idx in range(n_docs):
+            cls_embeddings.append(torch.load(data_dir.format(f'{idx}.pyt')))
+    else:
+        for idx, doc in enumerate(documents):
+            print(f"Embedding creation progress: {idx}/{n_docs}")
+            doc_sent_embeddings = torch.cat([
+                obtain_sentence_embedding(model, tokenizer, sentence) for sentence in doc
+            ])
+            torch.save(doc_sent_embeddings, data_dir.format(f'{idx}.pyt'))
+            cls_embeddings.append(doc_sent_embeddings)
+
+    # Make mask: torch.tensor of shape: (n_docs, max_n_sents). Mask out entries until reaches longest sentence.
     max_sentence_length = max([x.shape[0] for x in cls_embeddings])
     mask = torch.ones((n_docs, max_sentence_length))
-
     for idx, cls_embedding in enumerate(cls_embeddings):
         mask[idx, len(cls_embedding):] = 0
 

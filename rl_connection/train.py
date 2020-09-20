@@ -17,6 +17,7 @@ def train_rl(rl_model, data, n_iters=10000):
         source_documents, target_summaries = get_training_batch(data, batch_size=4)
 
         # Obtain embeddings
+        # Todo: Fix this
         source_sentence_embeddings, source_mask = obtain_sentence_embeddings(
             rl_model.extractor_model.bert_model,
             rl_model.extractor_model.bert_tokenizer,

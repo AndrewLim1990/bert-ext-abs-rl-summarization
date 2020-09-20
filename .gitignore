@@ -2,5 +2,7 @@
 .python-version
 summarization-project/*
 __pycache__/
-data/val/*
 *.pt
+*.pyt
+*.json
+*.pkl

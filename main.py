@@ -12,11 +12,12 @@ import torch
 
 
 def main():
-    train_new_extractor = True
-    train_new_abstractor = False
+    train_new_extractor = False
+    train_new_abstractor = True
     continue_rl_training = False
+    continue_ext_raining = True
+    ext_learning_rate = 1e-3
 
-    # torch.autograd.set_detect_anomaly(True)
     training_dictionaries = load_training_dictionaries()
     bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     bert_model = BertModel.from_pretrained('bert-base-uncased')
@@ -26,11 +27,18 @@ def main():
     if train_new_extractor:
         train_extractor(
             extractor_model,
-            data=training_dictionaries
+            data=training_dictionaries,
+            learning_rate=ext_learning_rate
         )
     else:
         extractor_model_path = "results/models/extractor.pt"
         extractor_model.load_state_dict(torch.load(extractor_model_path))
+        if continue_ext_raining:
+            train_extractor(
+                extractor_model,
+                data=training_dictionaries,
+                learning_rate=ext_learning_rate
+            )
 
     # Obtain abstractor model
     abstractor_model = AbstractorModelRNN(bert_tokenizer, bert_model)
@@ -38,7 +46,7 @@ def main():
         train_abstractor(
             abstractor_model,
             data=training_dictionaries,
-            n_iters=100000
+            n_iters=500000
         )
     else:
         abstractor_model_path = "results/models/abstractor.pt"

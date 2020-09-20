@@ -71,6 +71,7 @@ def logit(x):
     :param x: float value satisfying: 0 <= x < 1
     :return: the logit of input x
     """
-    x = torch.max(torch.tensor(1e-16), x)
+    epsilon = torch.tensor(1e-16)
+    x = torch.min(1 - (epsilon * 1e10), torch.max(epsilon, x))
     z = torch.log(x / (1 - x))
     return z
