@@ -166,7 +166,7 @@ class ActorCritic(torch.nn.Module):
             # Sample sentence to extract
             action_idx = action_dist.sample().T
 
-            # Form extraction_labels Todo: rename
+            # Form extraction_labels Todo: rename and use action_indicies instead
             extraction_labels = torch.zeros(batch_state.shape[:2])
             extraction_labels[torch.arange(batch_state.shape[0]), action_idx] = 1
 

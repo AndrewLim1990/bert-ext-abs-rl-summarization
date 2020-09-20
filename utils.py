@@ -1,3 +1,5 @@
+from torch import nn
+
 import torch
 
 
@@ -75,3 +77,29 @@ def logit(x):
     x = torch.min(1 - (epsilon * 1e10), torch.max(epsilon, x))
     z = torch.log(x / (1 - x))
     return z
+
+
+class MaskedSoftmax(nn.Module):
+    def __init__(self, dim=0):
+        super(MaskedSoftmax, self).__init__()
+        self.softmax = nn.Softmax(dim=dim)
+
+    def forward(self, x, mask=None):
+        """
+        Performs masked softmax, as simply masking post-softmax can be
+        inaccurate
+        :param x: [batch_size, num_items]
+        :param mask: [batch_size, num_items]
+        :return:
+        """
+        if mask is not None:
+            mask = mask.float()
+        if mask is not None:
+            x_masked = x * mask + (1 - 1 / mask)
+        else:
+            x_masked = x
+        x_max = x_masked.max(1)[0]
+        x_exp = (x - x_max.unsqueeze(-1)).exp()
+        if mask is not None:
+            x_exp = x_exp * mask.float()
+        return x_exp / x_exp.sum(1).unsqueeze(-1)

@@ -57,6 +57,13 @@ def train_extractor(
             extraction_labels,
             batch_size=16
         )
+        doc_lengths = torch.sum(samp_sent_mask, dim=1)
+        samp_sent_embeddings = torch.nn.utils.rnn.pack_padded_sequence(
+            samp_sent_embeddings,
+            lengths=doc_lengths,
+            batch_first=True,
+            enforce_sorted=False
+        )
 
         # Predict probability of extraction per sentence
         extraction_probabilities, extraction_sent_mask = ext_model.forward(

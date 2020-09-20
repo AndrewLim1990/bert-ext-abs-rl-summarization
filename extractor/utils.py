@@ -2,6 +2,7 @@ from bert.utils import BERT_OUTPUT_SIZE
 from collections import defaultdict
 from torch import nn
 from utils import compute_rouge_l
+from utils import MaskedSoftmax
 
 import torch
 
@@ -16,14 +17,16 @@ class ExtractorModel(nn.Module):
             input_size=BERT_OUTPUT_SIZE,
             hidden_size=BI_LSTM_OUTPUT_SIZE,
             num_layers=1,
-            bidirectional=True
+            bidirectional=True,
+            batch_first=True
         )
 
         self.ptr_lstm = nn.LSTM(
             input_size=BI_LSTM_OUTPUT_SIZE * 2,
             hidden_size=BI_LSTM_OUTPUT_SIZE * 2,
             num_layers=1,
-            bidirectional=False
+            bidirectional=False,
+            batch_first=True
         )
 
         self.bert_model = bert_model
@@ -33,6 +36,7 @@ class ExtractorModel(nn.Module):
 
         self.softmax = nn.Softmax(dim=1)
         self.sigmoid = nn.Sigmoid()
+        self.masked_softmax = MaskedSoftmax(dim=1)
 
         # Todo: Find suitable attn_dim
         attn_dim = self.ptr_lstm.hidden_size
@@ -73,33 +77,26 @@ class ExtractorModel(nn.Module):
           - p_mask:     torch.tensor of shape (batch_size, n_ext_sents) indicating if entries in 'p' are should be
                         considered legitmate. Necessary because operating in batches
         """
+        # Obtain hidden states for each sentence embedding from bi-RNN
         h, __ = self.bi_lstm(sent_embeddings)
-        z, __ = self.ptr_lstm(h)
-
-        # Eq (3) Self attention: Dot attention mechanism
-        attn_values = torch.bmm(h, z.transpose(1, 2))
-
-        # Eq (4)
-        self_attn_weights = self.softmax(attn_values)
-
-        # Eq (5)
-        context = torch.bmm(self_attn_weights, h)
+        h, __ = torch.nn.utils.rnn.pad_packed_sequence(h, batch_first=True)
 
         # Convert tensor into dict containing indicies of sents to be used as input
         ext_indicator_dict = self.obtain_extraction_indicator_dict(extraction_indicator)
 
-        p, p_mask = self.obtain_extraction_probabilities(h, context, ext_indicator_dict, sent_mask, use_init_embedding)
+        p, p_mask = self.obtain_extraction_probabilities(
+            h=h,
+            ext_indicator_dict=ext_indicator_dict,
+            sent_mask=sent_mask,
+            use_init_embedding=use_init_embedding
+        )
 
         return p, p_mask
 
-    def obtain_extraction_probabilities(self, embeddings, context, ext_indicator_dict, sent_mask, use_init_embedding):
+    def obtain_extraction_probabilities(self, h, ext_indicator_dict, sent_mask, use_init_embedding):
         """
         Obtains extraction probabilities per sentence
-
-        :param embeddings:          torch.tensor containing sentence embeddings.
-                                    Shape: (batch_size, n_src_sents, emb_dim)
-        :param context:             torch.tensor containing self-attention weighted sum of each embedding in input
-                                    embeddings. Shape: (batch_size, n_src_sents, context_dim)
+        :param h:                   torch.tensor containing hidden embeddings from bidirectional RNN
         :param ext_indicator_dict:  dictionary of lists in which each entry indicates if the sent embedding
                                     should be used as input to calculate the NEXT sentence to extract.
         :param sent_mask:           A torch.tensor (bool) indicating if the embedding actually exists in the source
@@ -112,24 +109,29 @@ class ExtractorModel(nn.Module):
                     Necessary because of batches. Not all documents have an equal amount of sentences being extracted.
                     Shape: (batch_size, n_ext_sents+1)
         """
-        n_batches = embeddings.shape[0]
+        n_batches = sent_mask.shape[0]
         p = list()
         for batch_idx in range(n_batches):
-            # Obtain appropriate sentence embeddings
-            selected_context = self.select_embeddings(
-                embeddings=context[batch_idx],
+            # Use pointer network on words to be extracted
+            h_selected = self.select_embeddings(
+                embeddings=h[batch_idx],
                 indicies=ext_indicator_dict.get(batch_idx, None),
                 use_init_embedding=use_init_embedding
-            )
+            ).unsqueeze(0)  # shape: (1, n_ext_sents, embedding_dim)
+            z, __ = self.ptr_lstm(h_selected)
 
-            # Calculate self attention values
-            u = self.linear_h(embeddings[batch_idx]) + self.linear_e(selected_context).unsqueeze(1)
-            u = self.tanh(u)
-            u = self.linear_v(u)
-            u = u.view(-1, u.shape[1])
+            # Self attention: "Glimpse", using dot attention mechanism
+            attn_values = torch.mm(z.squeeze(0), h[batch_idx].T)
+            self_attn_weights = self.softmax(attn_values)
+            context = torch.mm(self_attn_weights, h[batch_idx])
 
-            # Transform into binary probabilities
-            temp_p = self.sigmoid(u) * sent_mask[batch_idx]
+            # Calculate self attention values again ("hop attention")
+            attn_values = torch.mm(context, h[batch_idx].T)
+
+            # Transform into extraction probabilities
+            n_batch_sents = attn_values.shape[1]
+            temp_sent_mask = sent_mask[batch_idx][:n_batch_sents]  # sentence mask for single document
+            temp_p = self.masked_softmax(attn_values, temp_sent_mask)
 
             # Collect probs per batch
             p.append(temp_p)
