@@ -106,7 +106,7 @@ class ActorCritic(torch.nn.Module):
                                  - action_dists: list(Categorical()) containing categorical distributions. Each entry
                                                  represents the distribution amongst sentences to extract at a given
                                                  step for all batches.
-                                 - action_indicies: torch.tensor() containing the indicies of extracted sentences
+                                 - action_indices: torch.tensor() containing the indicies of extracted sentences
                                                     Shape: (batch_size, n_extracted_sentences, embedding_dim)
                                  - ext_sents: A torch.tensor() containing extracted sentence embeddings.
                                               Shape: (batch_size, n_extracted_sentences, embedding_dim)
@@ -117,6 +117,8 @@ class ActorCritic(torch.nn.Module):
 
         # Obtain number of samples in batch
         batch_size = batch_state.shape[0]
+        max_n_doc_sents = batch_state.shape[1]
+        embedding_dim = batch_state.shape[2]
 
         # Obtain maximum number of sentences to extract
         if n_label_sents is None:
@@ -128,71 +130,69 @@ class ActorCritic(torch.nn.Module):
 
         # Create variables to stop extraction loop
         max_n_ext_sents = batch_max_n_ext_sents.max()  # Maximum number of sentences to extract
-        n_actions = batch_state.shape[1]
-        stop_action_idx = n_actions - 1  # Previously appended stop_action embedding
+        stop_action_idx = max_n_doc_sents - 1  # Previously appended stop_action embedding
         is_stop_action = torch.zeros(batch_size).bool()
 
+        src_doc_lengths = torch.sum(mask, dim=1)
+        batch_state = torch.nn.utils.rnn.pack_padded_sequence(
+            batch_state,
+            lengths=src_doc_lengths,
+            batch_first=True,
+            enforce_sorted=False
+        )
+
         # Extraction loop
-        action_indicies, ext_sents, action_dists, stop_action_list = list(), list(), list(), list()
+        action_indices, ext_sents, action_dists, stop_action_list = list(), list(), list(), list()
         n_ext_sents = 0
         is_first_sent = True
         extraction_labels = None
         while True:
             # Obtain distribution amongst sentences to extract
             if is_first_sent:
-                action_probs, __ = self.extraction_model.forward(batch_state, mask)
+                action_probs, __, __ = self.extraction_model.forward(batch_state, mask)
                 is_first_sent = False
             else:
-                action_probs, action_mask = self.extraction_model.forward(
+                action_probs, __, __ = self.extraction_model.forward(
                     sent_embeddings=batch_state,
                     sent_mask=mask,
                     extraction_indicator=extraction_labels,
-                    use_init_embedding=False
+                    use_init_embedding=True
                 )
-
-            # Don't select already extracted sentences
-            # Todo: Fix this, something is wrong with the shapes.
-            if action_indicies:
-                indicies_to_ignore = torch.cat(action_indicies).T
-                extraction_mask = torch.ones(action_probs.shape)
-                batch_idx = [[x] for x in range(batch_size)]
-                extraction_mask[batch_idx, 0, indicies_to_ignore] = 0
-                action_probs = action_probs * extraction_mask
-
-            # For probability distribution
-            action_dist = self.convert_to_dist(action_probs)
-            action_dist = Categorical(action_dist)
+            action_probs = action_probs[:, -1:, :]
+            action_dist = Categorical(action_probs)
 
             # Sample sentence to extract
-            action_idx = action_dist.sample().T
+            ext_sent_indices = action_dist.sample().T
 
-            # Form extraction_labels Todo: rename and use action_indicies instead
-            extraction_labels = torch.zeros(batch_state.shape[:2])
-            extraction_labels[torch.arange(batch_state.shape[0]), action_idx] = 1
-
-            # index of sentence to extract
-            ext_sent = batched_index_select(batch_state, 1, action_idx)
+            # Embeddings of sentences to extract
+            ext_sent_embeddings = batched_index_select(batch_state, 1, ext_sent_indices)
 
             # Collect
             action_dists.append(action_dist)
-            ext_sents.append(ext_sent)
-            action_indicies.append(action_idx)
+            ext_sents.append(ext_sent_embeddings)
+            action_indices.append(ext_sent_indices)
+
+            # Form extraction_labels
+            extraction_labels = torch.zeros(batch_size, max_n_doc_sents)
+            already_ext_indices = torch.cat(action_indices)
+            extraction_labels[torch.arange(batch_size), already_ext_indices] = 1
 
             # Track number of sentences extracted from article
             n_ext_sents = n_ext_sents + 1
 
             # Check to see if should stop extracting sentences
-            is_stop_action = is_stop_action | (action_idx >= stop_action_idx)
+            # Todo: Fix this, the mask ALWAYS masks out the stop action...
+            is_stop_action = is_stop_action | (ext_sent_indices >= stop_action_idx)
             stop_action_list.append(is_stop_action)
             all_samples_stop = torch.sum(is_stop_action) >= batch_size
             is_long_enough = n_ext_sents >= max_n_ext_sents
             if all_samples_stop or is_long_enough:
                 break
 
-        action_indicies = torch.stack(action_indicies).T.squeeze(1)
+        action_indices = torch.stack(action_indices).T.squeeze(1)
         n_ext_sents = (~torch.stack(stop_action_list).squeeze(1).T).sum(dim=1)
         ext_sents = torch.stack(ext_sents).transpose(0, 1).squeeze()
-        return action_dists, action_indicies, ext_sents, n_ext_sents
+        return action_dists, action_indices, ext_sents, n_ext_sents
 
     def critic_layer(self, batch_state, batch_mask, extracted_sents):
         """

@@ -59,11 +59,12 @@ def batched_index_select(input, dim, index):
     :param index:
     :return:
     """
+    input = torch.nn.utils.rnn.pad_packed_sequence(input, batch_first=True)[0]
     views = [input.shape[0]] + [1 if i != dim else -1 for i in range(1, len(input.shape))]
     expanse = list(input.shape)
     expanse[0] = -1
     expanse[dim] = -1
-    index = index.view(views).expand(expanse)
+    index = index.reshape(views).expand(expanse)
     return torch.gather(input, dim, index)
 
 
@@ -92,14 +93,11 @@ class MaskedSoftmax(nn.Module):
         :param mask: [batch_size, num_items]
         :return:
         """
-        if mask is not None:
-            mask = mask.float()
-        if mask is not None:
-            x_masked = x * mask + (1 - 1 / mask)
-        else:
-            x_masked = x
-        x_max = x_masked.max(1)[0]
+        epsilon = torch.tensor([1e-8])
+        x_max = x.max(-1)[0]
         x_exp = (x - x_max.unsqueeze(-1)).exp()
         if mask is not None:
+            mask = mask.float()
             x_exp = x_exp * mask.float()
-        return x_exp / x_exp.sum(1).unsqueeze(-1)
+        dist = x_exp / torch.max(x_exp.sum(-1), epsilon).unsqueeze(-1)
+        return dist

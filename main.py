@@ -13,9 +13,9 @@ import torch
 
 def main():
     train_new_extractor = False
-    train_new_abstractor = True
+    train_new_abstractor = False
     continue_rl_training = False
-    continue_ext_raining = True
+    continue_ext_training = False
     ext_learning_rate = 1e-3
 
     training_dictionaries = load_training_dictionaries()
@@ -33,7 +33,7 @@ def main():
     else:
         extractor_model_path = "results/models/extractor.pt"
         extractor_model.load_state_dict(torch.load(extractor_model_path))
-        if continue_ext_raining:
+        if continue_ext_training:
             train_extractor(
                 extractor_model,
                 data=training_dictionaries,
