@@ -149,10 +149,10 @@ class ActorCritic(torch.nn.Module):
         while True:
             # Obtain distribution amongst sentences to extract
             if is_first_sent:
-                action_probs, __, __ = self.extraction_model.forward(batch_state, mask)
+                action_probs, __ = self.extraction_model.forward(batch_state, mask)
                 is_first_sent = False
             else:
-                action_probs, __, __ = self.extraction_model.forward(
+                action_probs, __ = self.extraction_model.forward(
                     sent_embeddings=batch_state,
                     sent_mask=mask,
                     extraction_indicator=extraction_labels,

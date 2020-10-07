@@ -72,53 +72,111 @@ class ExtractorModel(nn.Module):
                                      Shape: (n_documents, n_src_sents)
         :param use_init_embedding:   A bool indicating whether or not to use initial embedding
         :return:
-          - p:          torch.tensor of shape (batch_size, n_ext_sents, n_src_sents) containing probability of
-                        extracting each sentence individually (not a distribution, just binary)
-          - extraction_mask:     torch.tensor of shape (batch_size, n_ext_sents) indicating if entries in 'p' are should be
-                        considered legitmate. Necessary because operating in batches
+          - extraction_prob:  torch.tensor of shape (batch_size, n_ext_sents, n_src_sents) containing probability of
+                              extracting each sentence individually (not a distribution, just binary)
+          - extraction_mask:  torch.tensor of shape (batch_size, n_ext_sents) indicating if entries in 'extraction_prob'
+                              should be considered legitmate. Necessary because operating in batches.
         """
         # Obtain hidden states for each sentence embedding from bi-RNN
-        h, __ = self.bi_lstm(sent_embeddings)
-        h, __ = torch.nn.utils.rnn.pad_packed_sequence(h, batch_first=True)
+        bi_lstm_hidden_state, __ = self.bi_lstm(sent_embeddings)
+        bi_lstm_hidden_state, __ = torch.nn.utils.rnn.pad_packed_sequence(bi_lstm_hidden_state, batch_first=True)
 
         # Convert tensor into dict containing indicies of sents to be used as input
         ext_indicator_dict = self.obtain_extraction_indicator_dict(extraction_indicator)
 
-        p, extraction_mask, src_doc_mask = self.obtain_extraction_probabilities(
-            h=h,
+        extraction_prob, extraction_mask = self.obtain_extraction_probabilities(
+            bi_lstm_hidden_state=bi_lstm_hidden_state,
             ext_indicator_dict=ext_indicator_dict,
             src_sent_mask=sent_mask,
             use_init_embedding=use_init_embedding
         )
 
-        return p, extraction_mask, src_doc_mask
+        return extraction_prob, extraction_mask
 
-    def obtain_extraction_probabilities(self, h, ext_indicator_dict, src_sent_mask, use_init_embedding):
+    def obtain_extraction_probabilities(self, bi_lstm_hidden_state, ext_indicator_dict, src_sent_mask, use_init_embedding):
         """
         Obtains extraction probabilities per sentence
-        :param h:                   torch.tensor containing hidden embeddings from bidirectional RNN
-        :param ext_indicator_dict:  dictionary of lists in which each entry indicates if the sent embedding
-                                    should be used as input to calculate the NEXT sentence to extract.
+        :param bi_lstm_hidden_state: torch.tensor containing hidden embeddings from bidirectional RNN
+        :param ext_indicator_dict:  dict of lists in which each entry indicates if the sent embedding should be used as
+                                    input to calculate the next sentence to extract.
         :param src_sent_mask:       A torch.tensor (bool) indicating if the embedding actually exists in the source
                                     doc. Necessary because operating in batches. Shape: (batch_size, n_src_sents)
         :param use_init_embedding:  A bool indicating whether or not the initial embedding should be used
         :return:
           - p:  A torch.tensor containing the extraction probability of each sentence.
                 Shape: (batch_size, n_ext_sents+1, n_src_sents)
-          - extraction_mask: A torch.tensor (bool) indicating if the sentence extraction probabilities should be considered.
-                    Necessary because of batches. Not all documents have an equal amount of sentences being extracted.
-                    Shape: (batch_size, n_ext_sents+1) (+1 because we still predict next sentence for last sentence
-                    extracted. This is masked out in extraction_mask though)
+          - extraction_mask: A torch.tensor (bool) indicating if the sentence extraction probabilities should be
+                             considered. Necessary because of batches. Not all documents have an equal amount of
+                             sentences being extracted. Shape: (batch_size, n_ext_sents+1) (+1 because we still predict
+                             next sentence for last sentence extracted. This is masked out in extraction_mask though)
         """
-        n_batches = src_sent_mask.shape[0]
-        torch.cat([self.init_sent_embedding] * n_batches).unsqueeze(1)
+        # Obtain pointer LSTM hidden states
+        input_sent_embeddings, n_ext_sents = self.obtain_pointer_network_inputs(
+            src_doc_sent_embeddings=bi_lstm_hidden_state,
+            ext_indicator_dict=ext_indicator_dict,
+            use_init_embedding=use_init_embedding
+        )
+        ptr_hidden_state, __ = self.ptr_lstm(input_sent_embeddings)
+        ptr_hidden_state, __ = torch.nn.utils.rnn.pad_packed_sequence(ptr_hidden_state, batch_first=True)
 
+        # Self attention: "Glimpse", using dot attention mechanism
+        attn_values = torch.bmm(ptr_hidden_state, bi_lstm_hidden_state.transpose(1, 2))
+        self_attn_weights = self.softmax(attn_values)
+        context = torch.bmm(self_attn_weights, bi_lstm_hidden_state)
+
+        # Calculate self attention values again ("hop attention")
+        attn_values = torch.bmm(context, bi_lstm_hidden_state.transpose(1, 2))
+
+        # Formulate masks
+        src_doc_mask, extraction_mask = self.obtain_masks(src_sent_mask, ext_indicator_dict, attn_values, n_ext_sents)
+
+        # Obtain extraction probabilities
+        extraction_prob = self.masked_softmax(attn_values, src_doc_mask)
+        if extraction_prob.shape[1] > 1:
+            extraction_mask[range(extraction_mask.shape[0]), (extraction_mask.sum(dim=1) - 1).tolist()] = False
+
+        return extraction_prob, extraction_mask
+
+    @staticmethod
+    def obtain_masks(src_sent_mask, ext_indicator_dict, attn_values, n_ext_sents):
+        """
+        :param src_sent_mask:
+        :param ext_indicator_dict:
+        :param attn_values:
+        :param n_ext_sents:
+        :return:
+        """
+        n_src_sents = src_sent_mask.sum(dim=1).int()
+        src_doc_mask = torch.ones(attn_values.shape)
+        extraction_mask = torch.ones(attn_values.shape[:2]).bool()
+
+        for idx, n_sents in enumerate(n_ext_sents):
+            src_doc_mask[idx, n_sents:, :] = 0
+            extraction_mask[idx, n_sents:] = False
+            # Also src_doc_mask out things that have already been extracted
+        for idx, n_sents in enumerate(n_src_sents):
+            src_doc_mask[idx, :, n_sents:] = 0
+        for batch_idx, ext_sent_indices in ext_indicator_dict.items():
+            # Don't extract the same thing again
+            for idx, __ in enumerate(ext_sent_indices):
+                src_doc_mask[batch_idx, idx+1, [ext_sent_indices[:idx+1]]] = 0
+
+        return src_doc_mask, extraction_mask
+
+    def obtain_pointer_network_inputs(self, src_doc_sent_embeddings, ext_indicator_dict, use_init_embedding):
+        """
+        :param src_doc_sent_embeddings:
+        :param ext_indicator_dict:
+        :param use_init_embedding:
+        :return:
+        """
+        n_batches = src_doc_sent_embeddings.shape[0]
         h_selected = torch.cat([self.init_sent_embedding] * n_batches).unsqueeze(1)
         n_ext_sents = torch.ones(n_batches).int()
         if ext_indicator_dict:
             h_selected = list()
             for i in range(n_batches):
-                temp_h = h[i, ext_indicator_dict[i]]
+                temp_h = src_doc_sent_embeddings[i, ext_indicator_dict[i]]
                 if use_init_embedding:
                     temp_h = torch.cat([self.init_sent_embedding, temp_h])
                 h_selected.append(temp_h)
@@ -131,56 +189,8 @@ class ExtractorModel(nn.Module):
             batch_first=True,
             enforce_sorted=False
         )
-        z, __ = self.ptr_lstm(h_selected)
-        z, __ = torch.nn.utils.rnn.pad_packed_sequence(z, batch_first=True)
 
-        # Self attention: "Glimpse", using dot attention mechanism
-        attn_values = torch.bmm(z, h.transpose(1, 2))
-        self_attn_weights = self.softmax(attn_values)
-        context = torch.bmm(self_attn_weights, h)
-
-        # Calculate self attention values again ("hop attention")
-        attn_values = torch.bmm(context, h.transpose(1, 2))
-
-        # Formulate masks
-        n_src_sents = src_sent_mask.sum(dim=1).int()
-        src_doc_mask = torch.ones(attn_values.shape)
-        extraction_mask = torch.ones(attn_values.shape[:2]).bool()
-        for idx, n_sents in enumerate(n_ext_sents):
-            src_doc_mask[idx, n_sents:, :] = 0
-            extraction_mask[idx, n_sents:] = False
-            # Also src_doc_mask out things that have already been extracted
-        for idx, n_sents in enumerate(n_src_sents):
-            src_doc_mask[idx, :, n_sents:] = 0
-        for batch_idx, ext_sent_indices in ext_indicator_dict.items():
-            # Don't extract the same thing again
-            for idx, __ in enumerate(ext_sent_indices):
-                src_doc_mask[batch_idx, idx+1, [ext_sent_indices[:idx+1]]] = 0
-
-        p = self.masked_softmax(attn_values, src_doc_mask)
-
-        if p.shape[1] > 1:
-            extraction_mask[range(extraction_mask.shape[0]), (extraction_mask.sum(dim=1) - 1).tolist()] = False
-
-        return p, extraction_mask, src_doc_mask
-
-    def select_embeddings(self, embeddings, indicies, use_init_embedding):
-        """
-        Selects tensors appropriately amongst input embeddings. Adds initial embedding if indicated
-
-        :param embeddings: torch.tensor to select embeddings from
-        :param indicies: indicies indicating tensors to select
-        :param use_init_embedding: boolean indicating whether or not to add the initial sentence embedding
-        :return: A torch.tensor containing appropriate embeddings
-        """
-        if indicies is not None:
-            selected_context = embeddings[indicies]
-        else:
-            selected_context = torch.tensor([])
-        if use_init_embedding:
-            selected_context = torch.cat([self.init_sent_embedding, selected_context])
-
-        return selected_context
+        return h_selected, n_ext_sents
 
     @staticmethod
     def obtain_extraction_indicator_dict(extraction_indicator):

@@ -82,7 +82,7 @@ def train_extractor(
         )
 
         # Predict probability of extraction per sentence (training)
-        extraction_probabilities, extraction_sent_mask, __ = ext_model.forward(
+        extraction_probabilities, extraction_sent_mask = ext_model.forward(
             sent_embeddings=samp_sent_embeddings,
             sent_mask=samp_sent_mask,
             extraction_indicator=samp_extraction_labels
@@ -97,7 +97,7 @@ def train_extractor(
 
         if i % report_freq == 0:
             # Predict probability of extraction per sentence (validation)
-            val_extraction_probabilities, val_extraction_sent_mask, __ = ext_model.forward(
+            val_extraction_probabilities, val_extraction_sent_mask = ext_model.forward(
                 sent_embeddings=val_sent_embeddings,
                 sent_mask=val_sent_masks,
                 extraction_indicator=val_labels
@@ -115,9 +115,9 @@ def train_extractor(
         optimizer.zero_grad()
         training_loss.backward()
         optimizer.step()
-        if i % save_freq == 0:
-            torch.save(ext_model.state_dict(), model_output_file)
-            pickle.dump(losses, open('results/losses/extractor_training_losses.pkl', 'wb'))
+        # if i % save_freq == 0:
+        #     torch.save(ext_model.state_dict(), model_output_file)
+        #     pickle.dump(losses, open('results/losses/extractor_training_losses.pkl', 'wb'))
 
 
 def calc_loss(predictions, mask, labels):

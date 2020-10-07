@@ -12,7 +12,7 @@ import torch
 
 
 def main():
-    train_new_extractor = False
+    train_new_extractor = True
     train_new_abstractor = False
     continue_rl_training = False
     continue_ext_training = False
